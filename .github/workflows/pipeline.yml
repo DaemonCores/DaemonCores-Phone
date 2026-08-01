@@ -1,0 +1,64 @@
+name: Full Pipeline
+
+# Thin caller: this repo only declares its triggers and concurrency. The whole
+# job graph (change plan / auto-skip, env, debs, image, iso) lives in the shared
+# reusable workflow DaemonCores-CI/.github/workflows/full-pipeline.yml.
+#
+# Triggers:
+#   push (main)        full pipeline, but untouched stages auto-skip (the plan
+#                      job diffs the push) on top of the per-deb content cache.
+#   workflow_dispatch  the checkboxes decide, verbatim.
+#   schedule (monthly) rebuild everything.
+#
+# concurrency cancels an in-progress run when a newer push arrives (triggers and
+# concurrency must live in the caller — GitHub evaluates them here, not in the
+# reusable workflow).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.github/workflows/docs-wiki-sync.yml'
+  schedule:
+    - cron: '0 4 1 * *'
+  workflow_dispatch:
+    inputs:
+      rebuild_env:
+        description: 'Rebuild the :buildenv toolchain image first (needed once to seed it, or after editing env.yml)'
+        type: boolean
+        default: false
+      run_debs:
+        description: 'Build .deb packages'
+        type: boolean
+        default: true
+      run_iso:
+        description: 'Build ISO'
+        type: boolean
+        default: true
+      run_image:
+        description: 'Build container image'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  packages: write
+  pages: write
+  id-token: write
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    uses: DaemonCores/DaemonCores-CI/.github/workflows/full-pipeline.yml@main
+    with:
+      rebuild_env: ${{ inputs.rebuild_env }}
+      run_debs: ${{ inputs.run_debs }}
+      run_image: ${{ inputs.run_image }}
+      run_iso: ${{ inputs.run_iso }}
+    secrets: inherit
