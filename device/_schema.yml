@@ -1,0 +1,323 @@
+# JSON Schema for device.yml
+# Validates every device descriptor in device/<codename>/device.yml
+# Used by CI (DaemonCores-CI) to reject invalid device descriptors
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://github.com/DaemonCores/DaemonCores-Phone/device/_schema.yml"
+title: "DaemonCores-Phone Device Descriptor"
+description: "Schema for device.yml — the canonical device descriptor for the Halium standard pipeline"
+
+type: object
+required:
+  - codename
+  - vendor
+  - model
+  - vndk
+  - kernel_repo
+  - defconfig
+  - partition_layout
+  - halium_version
+  - status
+  - sources
+
+properties:
+  codename:
+    type: string
+    description: "Device codename (e.g., beryllium, enchilada, tissot). Must match the directory name."
+    pattern: "^[a-z0-9_]+$"
+    examples:
+      - beryllium
+      - enchilada
+      - tissot
+
+  vendor:
+    type: string
+    description: "Device manufacturer (e.g., Xiaomi, OnePlus, Samsung)"
+    examples:
+      - Xiaomi
+      - OnePlus
+
+  model:
+    type: string
+    description: "Commercial model name (e.g., POCO F1, OnePlus 6)"
+    examples:
+      - POCO F1
+      - OnePlus 6
+
+  vndk:
+    type: string
+    description: "Android Vendor Native Development Kit version. Critical: determines Halium version and hybris patch set."
+    pattern: "^(2[7-9]|3[0-5]|current)$"
+    examples:
+      - "28"
+      - "30"
+      - "33"
+
+  kernel_repo:
+    type: string
+    description: "Git URL of the vendor kernel repository. LineageOS priority."
+    format: uri
+    pattern: "^https://github\\.com/"
+    examples:
+      - "https://github.com/LineageOS/android_kernel_xiaomi_sdm845"
+
+  defconfig:
+    type: string
+    description: "Kernel defconfig name (relative to arch/arm64/configs/)"
+    pattern: "^[a-zA-Z0-9_-]+_defconfig$"
+    examples:
+      - "beryllium_defconfig"
+      - "sdm845-perf_defconfig"
+
+  partition_layout:
+    type: object
+    description: "Partition layout for boot image assembly"
+    required:
+      - boot
+      - dtbo
+      - vendor_boot
+    properties:
+      boot:
+        type: string
+        description: "Boot partition path or size"
+        examples:
+          - "/dev/block/bootdevice/by-name/boot"
+      dtbo:
+        type: string
+        description: "DTBO partition path or size"
+        examples:
+          - "/dev/block/bootdevice/by-name/dtbo"
+      vendor_boot:
+        type: string
+        description: "Vendor boot partition path (Android 11+)"
+        examples:
+          - "/dev/block/bootdevice/by-name/vendor_boot"
+      system:
+        type: string
+        description: "System partition path"
+        examples:
+          - "/dev/block/bootdevice/by-name/system"
+      userdata:
+        type: string
+        description: "Userdata partition path"
+        examples:
+          - "/dev/block/bootdevice/by-name/userdata"
+
+  halium_version:
+    type: string
+    description: "Halium version (derived from VNDK). Determines hybris patch set."
+    enum:
+      - "7.1"
+      - "9.0"
+      - "10.0"
+      - "11.0"
+      - "12.0"
+      - "13.0"
+      - "14.0"
+    examples:
+      - "11.0"
+      - "13.0"
+
+  status:
+    type: string
+    description: "Device support status"
+    enum:
+      - booted
+      - partial
+      - functional
+      - full
+    examples:
+      - functional
+
+  sources:
+    type: array
+    description: "Sources used to populate this device descriptor"
+    minItems: 1
+    items:
+      type: object
+      required:
+        - name
+        - url
+      properties:
+        name:
+          type: string
+          description: "Source name"
+          enum:
+            - lineageos_hudson
+            - lineageos_device_tree
+            - lineageos_common_tree
+            - lineageos_kernel
+            - ubports_api
+            - ubports_unofficial
+            - halium_manifest
+            - halium_projectmanagement
+            - aospdtgen
+            - adb_probe
+            - community_pr
+          examples:
+            - lineageos_device_tree
+        url:
+          type: string
+          format: uri
+          description: "Source URL"
+        branch:
+          type: string
+          description: "Git branch / ref the source was scraped from (e.g. lineage-22.2)"
+          examples:
+            - lineage-22.2
+            - lineage-23.2
+        date:
+          type: string
+          format: date
+          description: "Date the source was scraped"
+
+  soc:
+    type: string
+    description: "System-on-Chip identifier (vendor SoC family + marketing name). Optional; populated by probe when detectable."
+    examples:
+      - "Qualcomm SDM845 (Snapdragon 845)"
+
+  platform:
+    type: string
+    description: "SoC platform codename used as the kernel build target (matches arch/arm64/configs/<platform>_*.defconfig)."
+    pattern: "^[a-z0-9_-]+$"
+    examples:
+      - sdm845
+
+  boot:
+    type: object
+    description: "Boot image assembly parameters consumed by mkbootimg. Optional; omitted for legacy boot.img formats."
+    properties:
+      header_version:
+        type: integer
+        description: "Android boot image header version (0, 1, 2, 3, 4). Determines the mkbootimg layout."
+        minimum: 0
+        maximum: 4
+        examples:
+          - 1
+      base_address:
+        type: string
+        description: "Kernel load base address (hex string)."
+        examples:
+          - "0x00000000"
+      page_size:
+        type: integer
+        description: "Boot image page size in bytes (typically 2048 or 4096)."
+        examples:
+          - 4096
+      cmdline:
+        type: string
+        description: "Kernel command line embedded in the boot image."
+      mkbootimg_args:
+        type: string
+        description: "Extra arguments forwarded to mkbootimg (e.g. --header_version, --ramdisk_type)."
+        examples:
+          - "--header_version 1"
+      partition_size:
+        type: integer
+        description: "Boot partition size in bytes (cap for the assembled boot.img)."
+        minimum: 0
+        examples:
+          - 67092480
+
+  firmware_blobs:
+    type: object
+    description: "Vendor firmware blobs required for the device to boot/function. Optional; critical blobs must be sourced from a matching vendor build."
+    properties:
+      miui_source:
+        type: string
+        description: "MIUI / vendor firmware release identifier the blobs were extracted from."
+        examples:
+          - "V12.0.3.0.QEJMIXM"
+      critical:
+        type: array
+        description: "List of critical firmware blob paths (relative to the vendor partition) without which the device will not boot or core HALs fail."
+        items:
+          type: string
+        examples:
+          - - "vendor/firmware/tas2559_uCDSP.bin"
+
+  kernel_modules_builtin:
+    type: array
+    description: "Kernel CONFIG symbols built into the device kernel (=y). Optional; used to audit that required HAL drivers are compiled in."
+    items:
+      type: string
+      pattern: "^CONFIG_[A-Z0-9_]+=.+$"
+    examples:
+      - - CONFIG_MODULES=y
+        - CONFIG_QCA_CLD_WLAN=y
+
+  kernel_modules_loadable:
+    type: array
+    description: "Loadable kernel modules (.ko) shipped for the device. Optional; empty array when everything is built-in."
+    items:
+      type: string
+    examples:
+      - []
+
+  hal_services:
+    type: array
+    description: "Android HAL services (HIDL/AIDL) the device exposes. Optional; used by hybris to know which hwbinder/binder services to expect."
+    items:
+      type: object
+      required:
+        - service
+        - interface
+        - version
+        - transport
+      properties:
+        service:
+          type: string
+          description: "HAL service FQDN (e.g. android.hardware.keymaster)."
+        interface:
+          type: string
+          description: "HAL interface name (e.g. IKeymasterDevice)."
+        version:
+          type: string
+          description: "HAL interface version (e.g. 3.0)."
+          pattern: "^[0-9]+\\.[0-9]+$"
+        transport:
+          type: string
+          description: "Transport used by the HAL service."
+          enum:
+            - hwbinder
+            - binder
+            - vndbinder
+            - socket
+    examples:
+      - - service: "android.hardware.keymaster"
+          interface: "IKeymasterDevice"
+          version: "3.0"
+          transport: "hwbinder"
+
+  hybris_patches:
+    type: object
+    description: "Hybris patch set + community repositories required to adapt the vendor kernel for Halium. Optional; determines the hybris patch branch applied by the pipeline."
+    properties:
+      patch_set:
+        type: string
+        description: "Hybris patch set identifier (matches a Halium release branch)."
+        examples:
+          - "halium-11.0"
+      community_repos:
+        type: array
+        description: "Community repositories carrying device-specific hybris patches."
+        items:
+          type: string
+          format: uri
+        examples:
+          - - "https://github.com/Martinvlba/Halium-beryllium"
+
+  known_quirks:
+    type: array
+    description: "Free-form quirks strings documenting device-specific workarounds. Optional; surfaced in CI logs and the device status page."
+    items:
+      type: string
+    examples:
+      - - "Audio routing via tinymix (typical SDM845)"
+
+  notes:
+    type: string
+    description: "Free-form notes about this device (quirks, known issues, special instructions)"
+    examples:
+      - "Requires firmware blobs from MIUI 12.0.3"
