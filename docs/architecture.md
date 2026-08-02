@@ -1,324 +1,432 @@
-# debian-bootc Architecture
+# DaemonCores-Phone Architecture
 
-**Atomic / bootc (OSTree) image based on Debian 13 (Trixie)**
+**Halium standard pipeline on a Debian Trixie + bootc/OSTree base, for Android smartphones.**
 
-This document describes the architecture of debian-bootc: its layered composition, the CI/CD build pipeline, the runtime first-boot flow, and key design decisions.
+This document describes the architecture of DaemonCores-Phone: the founding principle, the
+`device.yml` contract, the standard Halium build pipeline, the bootc/OSTree base image, the
+Waydroid Android compatibility layer, the device ingestion flow, and the CI split with
+DaemonCores-CI.
 
 ---
 
 ## 1. Project Overview
 
-debian-bootc is a bootc-compliant OSTree image that delivers Debian 13 (Trixie) as an atomic, rollback-capable operating system. It is the **base layer** for projects like DaemonCores-VE, providing the full bootc/OSTree infrastructure that other projects can extend.
+DaemonCores-Phone is a Linux distribution for smartphones built on four pillars:
 
-The project follows the **bootc model**: the entire OS is built in a standard container pipeline (`podman build`), pushed to a container registry (GHCR), and applied atomically to the host using ostree as the on-disk storage engine. Updates are transactional and fully rollback-capable from the bootloader.
+1. **Halium standard** — proprietary Android drivers run unmodified via libhybris, the same
+   approach used by UBports and Droidian. No reverse engineering, no mainline port per device.
+2. **Standard CI pipeline** — a single workflow builds every device. The CI scrapes existing
+   sources (LineageOS hudson, UBports, Halium manifests, pmOS wiki, `dumpyara`/`aospdtgen`),
+   produces a `device.yml`, runs the generic Halium pipeline, and publishes a `boot.img` plus the
+   Debian bootc/OSTree rootfs. No manual port, no special cases.
+3. **Debian Trixie + bootc/OSTree** — atomic updates, rollback, and the entire Debian ecosystem
+   on the rootfs. The kernel + initramfs live in the Android `boot.img`; the userspace is a
+   bootc/OSTree image applied atomically to the device.
+4. **Waydroid** — Android app compatibility via LineageOS-based container images, with native
+   Halium support (vendor images stripped of Mesa GPU drivers). Source: docs.waydro.id,
+   github.com/waydroid/waydroid/releases
+
+The project targets **600+ devices** from a single pipeline — an order of magnitude more than
+manual-port projects (postmarketOS ~200–300, UBports 111) — because it reuses vendor kernels and
+the Halium compatibility layer instead of porting each device to mainline.
 
 ---
 
-## 2. Layered Architecture
+## 2. Founding Principle (NON-NEGOTIABLE)
 
-debian-bootc is designed as a **base layer** that other projects can build upon:
+> Halium for ALL devices. Standard and autonomous CI pipeline. The CI scrapes existing sources
+> → `device.yml` → generic Halium pipeline → `boot.img`. No per-SoC strategy. No per-device
+> kernel maintained. No special cases.
 
-| Layer | Source | Responsibility |
+This principle drives every architectural decision below. Anything that would require
+per-device kernel work, per-SoC strategy, or a special case is rejected.
+
+---
+
+## 3. Repository Split
+
+| Repository | Role | Contents |
 |---|---|---|
-| **debian-bootc** | This repository | bootc, ostree, composefs, bootupd, GRUB (Fedora rhboot fork), dracut, firstboot-user-setup, ifupdown2 (repacked), systemd-timesyncd (repacked), Secure Boot signing, APT repository |
-| **Downstream layers** | Other repositories (e.g., DaemonCores-VE) | Hypervisor, application, or custom tooling built `FROM ghcr.io/daemoncores/debian-bootc:latest` |
+| **DaemonCores-Phone** (this repo) | Source of truth | `device.yml` descriptors, build scripts (`scripts/build-halium.sh`, `scripts/repack-bootimg.sh`), ingestion scripts (`scripts/scrape-lineage.py`, `scripts/enrich-ubports.py`, `scripts/enrich-halium.py`, `scripts/enrich-aospdtgen.py`), the ADB probe (`scripts/probe.sh`), the kernel config fragment (`kernel/config-fragment-standard`), the `Containerfile`, the initramfs (`src/initramfs/`), and the docs |
+| **DaemonCores-CI** | Execution | The CI workflows (`workflows/build-device.yml`, `workflows/ingest-devices.yml`) and the ARM/AMD build matrices that call the scripts in this repo |
 
-### What the base layer provides
-
-- **bootc / ostree** — atomic OS management, content-addressed filesystem, rollback
-- **composefs** — fs-verity integrity protection for deployed OS trees
-- **bootupd** — EFI System Partition management independent of ostree
-- **GRUB** — Fedora rhboot fork with BLS (`blscfg`, `blsuki`) support
-- **dracut** — initramfs with `bootc`, `lvm`, and `ostree` modules
-- **firstboot-user-setup** — TUI wizard for hostname, locale, user accounts, root password, sudo, SSH policy
-- **ifupdown2** — repacked with systemd unit ordering patches for bootc compatibility
-- **systemd-timesyncd** — repacked with `After=network-online.target` drop-in
-- **Secure Boot** — MOK-enrolled GRUB signed with the debian-bootc signing key
-- **APT repository** — signed APT repo on GitHub Pages for all custom packages
+This repo does **not** contain CI workflows. The scripts are here; the workflows that invoke them
+live in DaemonCores-CI. This separation keeps the source of truth forkable and reviewable
+independently of the execution infrastructure.
 
 ---
 
-## 3. Build Pipeline
+## 4. The `device.yml` Contract
 
-The CI/CD pipeline is orchestrated by `.github/workflows/pipeline.yml` and consists of **three sequential stages**:
+Every supported device is described by a single `device/<codename>/device.yml` file. This file is
+the input to the standard pipeline. It is validated against
+[`device/_schema.yml`](_schema.yml) (JSON Schema draft 2020-12) by CI — an invalid descriptor is
+rejected before any build runs.
 
-```
-┌─────────────────────┐     ┌───────────────┐     ┌───────────────────┐
-│  bootc-debs-builder │───▶│  bootc-build  │───▶│       iso         │
-│                     │     │               │     │                   │
-│  Compile from src:  │     │  Build OCI    │     │  Download Fedora  │
-│  - libcomposefs     │     │  image from   │     │  netinstall ISO   │
-│  - libostree        │     │  Containerfile│     │  Inject branding  │
-│  - bootupd          │     │               │     │  Render kickstart │
-│  - grub-efi-signed  │     │  Push to      │     │  Build online ISO │
-│  - bootc            │     │  GHCR         │     │  Build offline ISO│
-│  - firstboot-setup  │     │               │     │                   │
-│  - ifupdown2 repack │     │  Sign with    │     │                   │
-│  - timesyncd repack │     │  cosign       │     │  Upload to        │
-│                     │     │               │     │  GitHub Releases  │
-│  Publish APT repo   │     │  Smoke test:  │     │                   │
-│  to GitHub Pages    │     │  bootc lint   │     │                   │
-└─────────────────────┘     └───────────────┘     └───────────────────┘
-```
+### Required fields
 
-### Stage 1: `bootc-debs-builder.yml`
+| Field | Type | Purpose |
+|---|---|---|
+| `codename` | string (`^[a-z0-9_]+$`) | Device codename (e.g. `beryllium`); must match the directory name |
+| `vendor` | string | Manufacturer (e.g. `Xiaomi`) |
+| `model` | string | Commercial model name (e.g. `POCO F1`) |
+| `vndk` | string (`^(2[7-9]\|3[0-5]\|current)$`) | Android VNDK version. **Critical**: determines the Halium version and the hybris patch set |
+| `kernel_repo` | URI (`^https://github\.com/`) | Git URL of the vendor kernel. LineageOS priority |
+| `defconfig` | string (`^[a-zA-Z0-9_-]+_defconfig$`) | Kernel defconfig (relative to `arch/arm64/configs/`) |
+| `partition_layout` | object | Boot image assembly: `boot`, `dtbo`, `vendor_boot` (Android 11+), optional `system`, `userdata` |
+| `halium_version` | enum (`7.1`–`14.0`) | Halium version, derived from VNDK. Determines the hybris patch set |
+| `status` | enum (`booted`/`partial`/`functional`/`full`) | Transparent device support status |
+| `sources` | array (min 1) | Provenance of each field: `lineageos_hudson`, `ubports_api`, `halium_manifest`, `aospdtgen`, `adb_probe`, `community_pr` |
+| `notes` | string (optional) | Free-form quirks, known issues, special instructions |
 
-Runs inside a `debian:trixie` container. The stage uses the composite actions
-`bootc-debs-start` and `bootc-debs-end` (defined in
-[DaemonCores-CI](https://github.com/DaemonCores/DaemonCores-CI)) to bootstrap
-the build environment and finalize artifact publishing. Its responsibilities:
+### Why VNDK, not Android version
 
-1. **Install build dependencies** — compilers, Rust toolchain, Meson, etc.
-2. **Build custom `.deb` packages** from source:
-   - `libcomposefs`, `libostree`, `bootupd`, `grub-efi-signed`, `bootc`, `firstboot-user-setup`
-   - Repacked `ifupdown2` with bootc-specific patches
-   - Repacked `systemd-timesyncd` with `After=network-online.target` drop-in
-3. **Publish the APT Repository** to GitHub Pages using `morph027/apt-repo-action`
+The decisive field is `vndk`, not the Android version displayed on the device. Google now allows
+vendors to run a newer Android on top of an older VNDK; the VNDK defines the native API surface
+that Halium must match. A OnePlus 11 running Android 15 reports VNDK 33 (Android 13), and the
+`device.yml` must record `vndk: "33"` / `halium_version: "13.0"`. The `vndk` is obtained via
+`adb shell getprop | grep vndk` (ADB probe) or from a firmware dump (`aospdtgen`).
 
-The resulting `.deb` artifacts are uploaded as workflow artifacts and consumed by the base image build.
+### Device status
 
-### Stage 2: `bootc-build.yml` (reusable workflow in DaemonCores-CI)
+Each `device.yml` carries a transparent status so users know what to expect before flashing:
 
-Runs on `ubuntu-latest`. Its responsibilities:
-
-1. **Free disk space** — remove unused toolchains to make room for the image build
-2. **Log in to GHCR** — authenticate both Podman (for build/push) and Docker (for cosign signing)
-3. **Build the OCI image** using `podman build` from the `Containerfile`
-   - On scheduled monthly builds: `--no-cache` is passed, and a `monthly-YYYYMMDD` tag is added
-4. **Check runtime dependencies** — verify `bootc` and `libostree` are present and linked
-5. **Smoke test** — run `bootc container lint` inside the built image
-6. **Push to GHCR** — push `:latest`, `:short-sha`, and optionally `:monthly-YYYYMMDD`
-7. **Sign the image** with cosign using keyless Sigstore signing via GitHub Actions OIDC
-
-### Stage 3: `iso-builder.yml` (reusable workflow in DaemonCores-CI)
-
-Runs inside an `almalinux:10` **privileged** container. Its responsibilities:
-
-1. **Install ISO build tools** — `xorriso`, `squashfs-tools`, `lorax`, `mkksiso`, `ImageMagick`, `podman`, `gh-cli`, `cosign`
-2. **Download Fedora Server netinstall ISO** — the Anaconda-based installer base
-3. **Customize the ISO** — run `scripts/inject-iso.sh` to inject branding (sidebar, topbar, header, product name) and Anaconda module configuration into the squashfs
-4. **Verify the container image signature** using `cosign verify` before embedding
-5. **Pull and save the OCI image** — for the offline ISO, the image is saved as an OCI archive and embedded in the ISO
-6. **Render Kickstart templates** — two templates (`iso-online-config.ks.tpl` and `iso-offline-config.ks.tpl`) are rendered to `/tmp/`
-7. **Build online and offline ISOs** using `mkksiso`:
-   - **Online ISO** — pulls the image from GHCR at install time
-   - **Offline ISO** — embeds the OCI archive; no network required
-8. **Patch GRUB configs** — replace Fedora branding with project branding in both EFI and BIOS GRUB configs
-9. **Re-implant ISO MD5 checksum** — so media verification still works
-10. **Upload ISOs to GitHub Releases** — attached to the `install-iso` release
-
-### Pipeline orchestration
-
-The `pipeline.yml` workflow ties the three stages together with `workflow_call`. Each stage can be toggled independently via `workflow_dispatch` inputs, allowing partial rebuilds (e.g., rebuild only the ISO without recompiling all `.deb` packages).
-
-The pipeline runs automatically on the first of every month (`cron: '0 4 1 * *'`), rebuilding everything from scratch with `--no-cache` to incorporate upstream security updates.
+| Status | Meaning |
+|---|---|
+| `booted` | The kernel boots, that's it |
+| `partial` | Network or audio works |
+| `functional` | Usable daily |
+| `full` | Everything works |
 
 ---
 
-## 4. Image Composition (Containerfile)
+## 5. Standard Halium Build Pipeline
 
-The `Containerfile` defines the debian-bootc base image. It is built `FROM debian:trixie`.
+The pipeline is **generic**: the same script runs for every device, parameterised only by the
+`device.yml`. There is no per-device branch in the build logic.
 
-### Build phases
+```
+┌─────────────────────────┐
+│  device.yml (input)     │
+└────────────┬────────────┘
+             ▼
+┌─────────────────────────┐
+│  scripts/build-halium.sh│
+│  1. Clone kernel_repo   │
+│  2. Merge config-       │
+│     fragment-standard   │
+│     (Waydroid + mobile + │
+│      Halium) into the    │
+│      device defconfig    │
+│  3. Apply Halium hybris  │
+│     patches             │
+│  4. Cross-compile ARM64  │
+│  5. Assemble boot.img    │
+│     (kernel + initramfs  │
+│      + DTB)              │
+└────────────┬────────────┘
+             ▼
+┌─────────────────────────┐
+│  GitHub Releases        │
+│  - boot.img             │
+│  - Debian bootc/OSTree  │
+│    rootfs               │
+└─────────────────────────┘
+```
 
-1. **Environment setup**
-   - `STOPSIGNAL SIGRTMIN+3` — required for systemd-in-container compatibility
-   - `DEBIAN_FRONTEND=noninteractive` — suppress interactive debconf prompts
-   - `SHELL ["/bin/bash", "-euo", "pipefail", "-c"]` — fail fast on any error
-   - `BOOTC_GPG_SHA256` — SHA-256 checksum of the APT repo signing key, verified at build time
+### `scripts/build-halium.sh`
 
-2. **SSL and package prerequisites**
-   - Install `ca-certificates`, `openssl`, `git`, `curl`, `wget`
-   - Rewrite Debian APT sources from `http://` to `https://`
-   - Remove the known-broken NetLock Arany certificate
+The single build entry point. It takes a `device.yml` as input and performs:
 
-3. **APT repository trust**
-   - Download the debian-bootc APT signing key to `/usr/share/keyrings/debian-bootc-keyring.gpg`
-   - Verify the key against the hardcoded SHA-256 before trusting it
+1. **Clone `kernel_repo`** — the vendor kernel (LineageOS priority, then stock, then other).
+   We maintain **no kernel**: the repo is cloned as-is from the upstream maintainer.
+2. **Merge `kernel/config-fragment-standard`** into the device `defconfig` via
+   `merge_config.sh`. The fragment carries the Waydroid dependencies, the mobile optimisations,
+   and the Halium hybris requirements (see §6).
+3. **Apply Halium hybris patches** — the standard hybris patch set for the `halium_version`
+   declared in the `device.yml`. The patch set is selected by the VNDK-derived version, not by
+   the device.
+4. **Cross-compile ARM64** — `make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-`.
+5. **Assemble `boot.img`** — kernel + standard Halium initramfs + DTB, packaged with
+   `mkbootimg` (`scripts/repack-bootimg.sh`).
 
-4. **Base package installation**
-   - Install the Debian kernel (`linux-image-amd64`, `linux-headers-amd64`)
-   - Install firmware packages (`firmware-linux-free`, `firmware-linux`, `firmware-misc-nonfree`, `intel-microcode`, `amd64-microcode`)
-   - Install `bootc` and `firstboot-user-setup` from the custom APT repository
-   - Install standard utilities: `sudo`, `locales`, `openssh-server`, `nano`, `man-db`, `less`, etc.
-   - Install networking: `ifupdown2`, `isc-dhcp-client`, `wpasupplicant`, `iproute2`
-   - Install `systemd-timesyncd` (repacked)
+### `scripts/repack-bootimg.sh`
 
-5. **Filesystem migration for ostree**
-   - Create `/var/home`, `/var/roothome`, `/var/mnt`, `/var/srv`, `/var/opt`
-   - Copy `/usr/lib/locale` contents to `/var/usr/lib/locale`
-   - Remove `/home`, `/root`, `/mnt`, `/srv`, `/opt` and replace with symlinks into `/var`
-   - Symlink `/ostree` to `/sysroot/ostree`
-   - Symlink `/usr/lib/locale` to `/var/lib/locale`
+Packages the compiled kernel, the standard Halium initramfs, and the DTB into an Android
+`boot.img` compatible with the device's `partition_layout`.
 
-6. **Health check**
-   - `HEALTHCHECK NONE` — bootc images are updated in-place via ostree; no runtime healthcheck applies
+### Kernel strategy: zero maintenance
+
+> We prefer a kernel developed by a random contributor that applies recent security patches over
+> an old official kernel that is obsolete and has security holes.
+
+The pipeline **does not recompile a kernel per device**. A single global kernel is built per major
+version, and device support is added via an external kernel module package that plugs into the
+global block. If there is nothing to optimise or fix in the kernel output of the external
+device-support module, the pipeline does not rebuild it — it builds on an already-packaged,
+functional source.
+
+LineageOS maintains vendor kernels for 100+ devices with monthly backports of the Android
+Security Bulletin (ASB). The pipeline reuses that work: the `kernel_repo` field points at the
+LineageOS kernel repo, and the security patches flow automatically with each rebuild.
 
 ---
 
-## 5. First-Boot Flow
+## 6. Kernel Config Fragment (`kernel/config-fragment-standard`)
 
-When the image boots for the first time (whether from ISO installation or a direct `bootc switch`), the following sequence runs:
+A single standard config fragment is merged into **every** device's `defconfig`. It carries three
+categories of options required across the whole fleet:
+
+### Waydroid dependencies
+
+```
+CONFIG_ANDROID=y
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y
+CONFIG_PSI=y
+CONFIG_IPV6=y
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_NAMESPACES=y
+```
+
+### Mobile optimisations
+
+- **CPUFreq** — dynamic CPU frequency scaling
+- **CPUIdle** — idle states for power saving
+- **Runtime PM** — runtime power management
+- **Suspend/Resume** — sleep/wake support
+- **GPU DRM/MSM** — Qualcomm display stack
+- **Modem** — `QMI_WWAN`, `MBIM` for cellular data
+- **IIO sensors** — accelerometer, proximity, light sensors
+- **HID I2C/SPI** — touchscreens and other HID peripherals
+
+### Halium hybris requirements
+
+The hybris patch set needs the binder and ashmem (or binderfs on newer kernels) infrastructure
+enabled. The fragment consolidates these so a single merge step covers Waydroid, mobile, and
+Halium at once.
+
+---
+
+## 7. Boot Flow
+
+DaemonCores-Phone boots through the Android bootloader chain, then hands off to a Linux
+initramfs that mounts the Debian bootc/OSTree rootfs:
 
 ```
 ┌─────────────────────────────┐
-│  System boots (GRUB + BLS)  │
+│  Android bootloader        │
+│  (device-specific: aboot,  │
+│   XBL, U-Boot, etc.)        │
 └──────────────┬──────────────┘
                ▼
 ┌─────────────────────────────┐
-│  dracut initramfs           │
-│  (bootc, lvm, ostree modules)│
+│  boot.img                   │
+│  - Halium-patched kernel    │
+│  - Standard Halium initramfs│
+│  - DTB                      │
 └──────────────┬──────────────┘
                ▼
 ┌─────────────────────────────┐
-│  ostree deploys rootfs       │
-│  (composefs + fs-verity)     │
+│  Halium initramfs           │
+│  (src/initramfs/)           │
+│  - Linux init               │
+│  - overlayfs mount scripts  │
+│  - Auto-detection at boot:  │
+│    * droid-card (audio)     │
+│    * partitions              │
+│    * vendor HALs             │
 └──────────────┬──────────────┘
                ▼
 ┌─────────────────────────────┐
-│  systemd multi-user.target   │
-└──────────────┬──────────────┘
-               ▼
-┌─────────────────────────────┐
-│  firstboot-user-setup        │
-│  (TUI wizard on tty1)        │
-│  - Hostname                  │
-│  - Locale / keyboard         │
-│  - Primary user account        │
-│  - Root password               │
-│  - Sudo privileges             │
-│  - SSH root login policy       │
-└──────────────┬──────────────┘
-               ▼
-┌─────────────────────────────┐
-│  ifupdown2-autoconf           │
-│  (DHCP on first boot)         │
-└──────────────┬──────────────┘
-               ▼
-┌─────────────────────────────┐
-│  networking fully online     │
+│  Debian Trixie rootfs       │
+│  (bootc/OSTree)             │
+│  systemd multi-user.target  │
 └─────────────────────────────┘
 ```
 
-### firstboot-user-setup
+### Standard Halium initramfs (`src/initramfs/`)
 
-A TUI wizard modelled after the Raspberry Pi OS `userconfig` service. Runs as `ExecStartPre` on `getty@tty1.service` before the login prompt appears. It guides through:
+The initramfs is **the same for all devices**. It performs the Halium standard early boot:
 
-- Hostname (validated against RFC 952)
-- System locale (`dpkg-reconfigure locales`)
-- Keyboard layout (`dpkg-reconfigure keyboard-configuration`)
-- Primary user account — username, full name, password (8 characters minimum)
-- Root password
-- Sudo privileges
-- SSH root login policy
+- **Linux init** — standard systemd-based init
+- **overlayfs mount scripts** — mount the Android vendor partitions as read-only overlays
+- **Auto-detection at boot** — the config layer is largely self-resolving at runtime:
+  - `droid-card` reads the audio config from `/vendor/etc/audio_policy.conf` or
+    `/system/etc/audio_policy.conf` at every service start — no config file to generate
+  - Partition layout from `/dev/block/by-name/`
+  - Vendor properties via `getprop`
+  - Available HALs from `/vendor/lib*/hw/`
 
-Writes `/var/lib/firstboot-user-setup.done` on completion to prevent re-execution. The temporary root password (`BootcDebug@0`) is replaced by the user-supplied password, and `chage -d 0` forces a change on next login.
-
-### ifupdown2-autoconf
-
-An `ifupdown2-autoconf` helper performs DHCP autoconfiguration on first boot if the interfaces file has not yet been customised. This ensures the system has network connectivity before the user manually configures interfaces.
-
----
-
-## 6. Networking
-
-### Network manager
-
-debian-bootc uses **ifupdown2** (repacked from Proxmox sources with bootc-specific patches) instead of `systemd-networkd`. The rationale is documented in [`docs/justifications.md`](justifications.md).
-
-### Systemd unit ordering
-
-The `ifupdown2-pre.service` is ordered `After=ostree-remount.service` to ensure the ostree read-only root is mounted before networking attempts to start. Without this ordering, `ifupdown2` can race against ostree remount and fail to bring up interfaces.
-
-### Default configuration
-
-The base image does not ship a pre-configured `/etc/network/interfaces` file. Downstream layers (e.g., DaemonCores-VE) are expected to provide their own network configuration. The `ifupdown2-autoconf` helper provides temporary DHCP on first boot to ensure basic connectivity.
+What is **not** auto-detected — and is the real gate — is the kernel. It must be compiled with
+the Halium patches, the right `defconfig`, and packaged in a `boot.img` with the Halium initramfs
+**before** the first boot. No detection produces a booting kernel; that work happens upstream, at
+build time, in the standard pipeline.
 
 ---
 
-## 7. Storage
+## 8. bootc/OSTree Base Image
 
-### OSTree
+The rootfs is a Debian Trixie ARM64 image built with bootc/OSTree, adapted from the
+[debian-bootc](https://github.com/DaemonCores/debian-bootc) base. The bootc/OSTree model is
+preserved: the entire OS is built as an OCI container image, applied atomically to the device, and
+fully rollback-capable.
 
-OSTree is the filesystem layer underneath bootc. It stores OS trees in a content-addressed object store modelled after Git, deploys them via hard links for storage efficiency, and makes every deployment atomic. It manages `/usr`, `/etc`, and `/boot` while delegating `/var` and `/home` to normal mutable storage.
+| Component | Role |
+|---|---|
+| **bootc / ostree** | Atomic OS management, content-addressed filesystem, rollback |
+| **composefs** | fs-verity integrity protection for the deployed OS tree |
+| **dracut** | Initramfs generator (the Halium initramfs is a dracut output) |
+| **Debian Trixie ARM64** | Userspace base — the full Debian ecosystem on the phone |
 
-This build is compiled from upstream sources with:
-- **composefs support** enabled for filesystem integrity
-- **dracut integration** — the `50ostree` dracut module and `ostree-system-generator` for initramfs and early boot integration
-- **prepare-root** configured for read-only sysroot
+The base image provides a fully supported CLI boot. The UI and user-friendliness are a separate
+Phase 2 (see [Roadmap](../todo/ROADMAP.md), P15) — "the Android of Linux" deserves its own design
+pass. For now, if it boots to a fully supported CLI, that is the target.
 
-### composefs
+### Why bootc/OSTree on a phone
 
-composefs provides integrity protection for ostree deployments using fs-verity. Every file in the deployed OS tree is verified against a cryptographic hash at read time, making it impossible to tamper with the system at rest without detection.
-
-Enabled in `prepare-root.conf`:
-```ini
-[sysroot]
-readonly=true
-
-[composefs]
-enabled=yes
-```
-
-### bootupd
-
-bootupd manages the EFI System Partition independently of the ostree-managed root filesystem. In a bootc system the EFI binaries (shim, GRUB) live outside the ostree tree and cannot be updated through the normal container image update path. bootupd bridges this gap by tracking and updating EFI binaries as a separate managed component.
-
-The `bootc-finalize` script (run at package install time inside the container build) sets up the bootupd metadata by calling `bootupctl backend generate-update-metadata`.
+- **Atomic updates** — the whole OS is replaced in one transaction; a failed update is rolled
+  back from the bootloader.
+- **Rollback** — every previous deployment is kept; a bad update never bricks the phone.
+- **Debian ecosystem** — `apt`, the full Debian archive, and every Debian package run natively.
+- **Shared infrastructure** — the bootc/OSTree stack is the same one that powers the
+  DaemonCores-VE and debian-bootc projects; the smartphone inherits a proven, maintained base.
 
 ---
 
-## 8. Secure Boot
+## 9. Waydroid — Android App Compatibility Layer
 
-### Chain of trust
+Waydroid provides a minimal Android system image based on LineageOS (currently Android 13, with
+Android 16 support in development as of v1.6.3, May 2025). It runs in a Wayland session and exposes
+the DRM render node for direct GPU access. Waydroid officially supports HALIUM systems: the OTA
+channels provide special vendor images stripped of Mesa GPU drivers, activated by setting
+`TARGET_USE_MESA=false` at build time.
+
+### Kernel requirements
 
 ```
-UEFI firmware → shim-signed (Microsoft-signed) → grubx64.efi (debian-bootc-signed) → kernel
+CONFIG_ANDROID=y
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y
+CONFIG_PSI=y
+CONFIG_IPV6=y
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_NAMESPACES=y
 ```
 
-### Signing key
+### Distribution and maintenance
 
-The `grub-efi-amd64-signed` package includes:
+Waydroid is actively maintained (4 releases between Nov 2024 and May 2025) and is available in
+official repositories of Debian 14+, Ubuntu 26.10+, Fedora, and Void Linux.
 
-- A GRUB EFI binary signed with the debian-bootc Secure Boot signing key
-- The signing certificate at `/usr/share/debian-bootc/sb_signing.crt`
-- A `postinst` script that queues MOK enrollment automatically on package install
+### Sources
 
-### MOK enrollment flow
-
-1. **First boot after installation** — the firmware launches the blue MokManager screen
-2. Select **Enroll MOK**
-3. Select **Continue**
-4. Select **Yes**
-5. Enter the enrollment password when prompted
-6. Select **Reboot**
-
-The signing key is then enrolled permanently. All subsequent boots are fully verified end-to-end without any further action.
-
-### Verification
-
-```bash
-mokutil --sb-state          # confirm Secure Boot is active
-mokutil --list-enrolled     # confirm the debian-bootc key is present
-```
+- `docs.waydro.id`
+- `docs.waydro.id/development/compile-waydroid-lineage-os-based-images`
+- `github.com/waydroid/waydroid/releases`
+- `wiki.archlinux.org/title/Waydroid`
 
 ---
 
-## 9. Documentation Toolchain
+## 10. Device Ingestion Flow
+
+The device database is populated by a multi-source ingestion pipeline. No single source is
+authoritative; each `device.yml` records its provenance in the `sources[]` array.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Sources (scraped/enriched)                                  │
+│  - LineageOS hudson (~290 active + 600 historical)           │
+│  - UBports API (111 devices)                                 │
+│  - Halium manifests                                           │
+│  - pmOS wiki (VNDK, kernel_repo, defconfig)                  │
+│  - aospdtgen (firmware dump -> device tree)                  │
+│  - dumpyara (stock ROM dump)                                 │
+└────────────┬─────────────────────────────────────────────────┘
+             ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Ingestion scripts (this repo)                               │
+│  - scripts/scrape-lineage.py   (hudson JSON -> device.yml)   │
+│  - scripts/enrich-ubports.py   (UBports API -> VNDK)         │
+│  - scripts/enrich-halium.py   (Halium manifests ->          │
+│                                 kernel_repo, defconfig)       │
+│  - scripts/enrich-aospdtgen.py (firmware dump -> device tree)│
+└────────────┬─────────────────────────────────────────────────┘
+             ▼
+┌──────────────────────────────────────────────────────────────┐
+│  device/<codename>/device.yml  (validated by _schema.yml)     │
+└────────────┬─────────────────────────────────────────────────┘
+             ▼
+┌──────────────────────────────────────────────────────────────┐
+│  CI in DaemonCores-CI: build-device.yml                       │
+│  (calls scripts/build-halium.sh for each device)             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### ADB probe for the truly unknown (`scripts/probe.sh`)
+
+For a device on no list, the user runs the probe **on the existing Android** (stock or LineageOS),
+not on a custom OS. The probe reads:
+
+- `getprop | grep vndk` → `vndk` / `halium_version` (the critical field)
+- `getprop ro.product.device`, `ro.board.platform`, `ro.treble.enabled`
+- `ls -l /dev/block/by-name/` → `partition_layout`
+- `/proc/config.gz` → the exact `defconfig` of the running kernel
+- `/vendor/etc/audio_policy.conf` and `/vendor/lib*/hw/` → audio stack and available HALs
+
+It outputs a `device.yml` directly. The user opens a PR; CI validates it against the JSON Schema,
+making review near-instant. The "30 seconds to add a device" target is realistic because the
+schema validation does the review.
+
+### `aospdtgen` for devices nobody owns
+
+For devices nobody has on hand, `aospdtgen` builds a LineageOS-compatible device tree from a stock
+ROM dump produced by `dumpyara`. It works on any Treble device (Android 8.0+ with VNDK enabled).
+The chain — dump → device tree → VNDK → kernel repo → build — is fully automatable upstream, so
+the database can grow without anyone touching the device.
+
+---
+
+## 11. Microkernel Verdict
+
+A research pass (Roadmap P05) evaluated microkernels for the smartphone form factor:
+
+| Microkernel | Verdict |
+|---|---|
+| seL4 | No smartphone port |
+| Zircon / Fuchsia | Nest only; smartphone deprecated |
+| Redox | Boot POC 2025; zero drivers |
+| Minix 3 | Dormant |
+
+**Decision:** monolithic Linux for the short/medium term. The Halium approach (vendor kernel +
+modules) is already the "juste milieu" (middle ground) the project seeks — a full kernel, but
+with device support added as an external module rather than compiled in per device. seL4 is
+watched as the only credible long-term option, but it has no smartphone port today.
+
+---
+
+## 12. Documentation Toolchain
 
 | Component | Tool | Output |
 |---|---|---|
-| Inline docs | POSIX shell header blocks | Source code |
+| Inline docs | POSIX shell header blocks (scripts), Doxygen (C) | Source code |
 | Static docs | Markdown in `docs/` | GitHub web UI, wiki |
-| Wiki sync | CI workflow (`docs-wiki-sync.yml`) | GitHub wiki |
-| Reference extraction | `shdoc` (for shell scripts) | Markdown |
+| Wiki sync | CI workflow (`docs-wiki-sync.yml` in DaemonCores-CI) | GitHub wiki |
+| Reference extraction | `shdoc` (shell scripts) | Markdown |
 
-The `docs/reference/` directory is auto-generated by CI from inline header blocks and is **not committed** to the repository.
+The `docs/reference/` directory is auto-generated by CI from inline header blocks and is **not
+committed** to the repository.
 
 ---
 
-## 10. Related Documents
+## 13. Related Documents
 
-- [`README.md`](../README.md) — Project overview, quick start, technical stack
-- [`docs/justifications.md`](justifications.md) — Honest justifications for controversial design choices
-- [`Containerfile`](../Containerfile) — Image composition definition
+- [`README.md`](../README.md) — Project overview, device status table, quick start
+- [`docs/justifications.md`](justifications.md) — Honest justifications for the smartphone-specific
+  design choices
+- [`docs/sources-kernel.md`](sources-kernel.md) — Android Kernel Source Catalogue (verified vendor
+  kernel sources)
+- [`docs/minimal.md`](minimal.md) — The smartphone minimal variant
+- [`device/_schema.yml`](../device/_schema.yml) — JSON Schema validating every `device.yml`
+- [`todo/ROADMAP.md`](../todo/ROADMAP.md) — Development roadmap with structural markers
+- [`Containerfile`](../Containerfile) — ARM64 Debian Trixie bootc/OSTree image definition
