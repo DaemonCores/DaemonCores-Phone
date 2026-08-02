@@ -1,242 +1,396 @@
 # Justifications
 
-**Honest explanations for controversial or non-obvious design choices in debian-bootc.**
+**Honest explanations for the controversial or non-obvious design choices in DaemonCores-Phone.**
 
-This document follows a transparency principle: every decision that could be questioned is documented here with its rationale, its risks, and the alternatives.
-
----
-
-## 1. Default Root Password (`BootcDebug@0`)
-
-### What we do
-
-The Kickstart installer sets a temporary default root password: `BootcDebug@0`.
-
-### Why it exists
-
-This is a **deliberate fallback**, not an oversight. The `firstboot-user-setup` wizard runs on first boot before the login prompt and asks the user to set a root password. If that wizard fails to run — because the TTY is unavailable, the service crashes, or the boot is interrupted — the system would be completely inaccessible without a known fallback credential.
-
-The password serves the same role as the default passwords on Raspberry Pi OS, cloud images, and virtually every other pre-installed Linux image: it guarantees you are not locked out of your own machine before you've had a chance to configure it.
-
-### What happens on first boot
-
-1. The `firstboot-user-setup` wizard prompts for a root password
-2. The user-supplied password replaces `BootcDebug@0`
-3. `chage -d 0` is applied, forcing the root account to change its password on the next login
-4. The temporary password never survives first boot
-
-### Risks
-
-- If the wizard is bypassed and the user does not log in as root, the temporary password remains active until someone does. This is why the wizard is wired into `getty@tty1.service` as `ExecStartPre` — it is nearly impossible to reach a login prompt without passing through it.
-- The password is documented in the README and in this file. This is intentional: security through obscurity would be worse. The password is meant to be temporary and replaced, not secret.
-
-### Alternative
-
-Remove the fallback entirely and trust that `firstboot-user-setup` will never fail. We rejected this because a single failure mode (e.g., serial console without `tty1`) would render the installed system unrecoverable without physical access to the boot media.
+This document follows a transparency principle: every decision that could be questioned is
+documented here with its rationale, its risks, and the alternatives.
 
 ---
 
-## 2. Fedora GRUB Fork (rhboot/grub2)
+## 1. Halium Instead of Mainline Kernels
 
 ### What we do
 
-Instead of using the standard Debian `grub-efi-amd64-signed` package, this repository compiles GRUB from the [Fedora rhboot/grub2](https://github.com/rhboot/grub2) fork at a pinned commit.
+DaemonCores-Phone uses [Halium](https://halium.org/) and libhybris to run proprietary Android
+drivers, rather than porting each device to the mainline Linux kernel.
 
 ### Why it is necessary
 
-The standard Debian GRUB package does not include the `blscfg` and `blsuki` modules required by ostree and bootc for [BLS](https://uapi-group.org/specifications/specs/boot_loader_specification/) (Boot Loader Specification) kernel entry management. Without these modules, bootc cannot generate or manage bootloader entries, breaking the atomic update and rollback model.
+Mainline Linux supports only a handful of Android phones — the postmarketOS mainline ports cover
+~200–300 devices after years of manual work, and even then the support is often partial (Wi-Fi
+broken, modem missing, camera basic). The proprietary Android drivers that ship with the device
+work on Android; Halium + libhybris make them work on a GNU/Linux userspace without reverse
+engineering. This is the same approach UBports and Droidian use, and it is the only approach that
+scales to the 600+ devices the project targets.
+
+The trade-off is explicit: we get massive device coverage and zero reverse-engineering work, at
+the cost of running a vendor (downstream) kernel instead of mainline. For a project whose goal is
+"all devices", this trade-off is non-negotiable.
 
 ### Risks
 
-- The Fedora fork may diverge from upstream GRUB in ways that introduce bugs or incompatibilities. The commit is pinned and the build is smoke-tested.
-- Maintenance burden: upstream Debian GRUB security updates must be tracked and backported if they affect the fork.
+- Vendor kernels are downstream and may lag mainline on security fixes. Mitigated by preferring
+  LineageOS kernels, which backport the Android Security Bulletin (ASB) monthly.
+- libhybris is an additional compatibility layer that can introduce subtle bugs in audio, camera,
+  and sensors. Mitigated by the Halium standard, which is maintained upstream and used by UBports
+  and Droidian.
+- The vendor kernel may enable only the features the vendor shipped; mainline-only features
+  (e.g., newer filesystems) may be unavailable.
 
 ### Alternative
 
-Patch the Debian GRUB package to add BLS modules. This would require maintaining a Debian-specific patch set against a moving upstream, which is arguably more work than tracking the already-BLS-enabled Fedora fork.
+Port each device to mainline Linux. This is the postmarketOS approach. It produces a cleaner
+kernel and direct driver support, but requires per-device work that does not scale beyond a few
+hundred devices even with a large contributor base. Rejected for a project whose explicit goal is
+to support 600+ devices from a single pipeline.
 
 ---
 
-## 3. dracut Instead of initramfs-tools
+## 2. Vendor Kernels, Zero Maintenance
 
 ### What we do
 
-This image uses [dracut](https://github.com/dracut-ng/dracut-ng) to generate the initramfs, rather than Debian's default `initramfs-tools`.
+For each device, the `device.yml` references a `kernel_repo` (LineageOS priority, then stock, then
+other). The pipeline clones the repo, applies the Halium hybris patches, compiles with the
+`defconfig`, and produces the kernel. **We maintain no kernel.**
 
 ### Why it is necessary
 
-1. **bootc/ostree module support** — dracut ships with first-class modules for `bootc`, `ostree`, and `lvm` that are maintained upstream and integrated with the bootc ecosystem. `initramfs-tools` has no equivalent ostree integration.
-2. **Host-only vs generic** — dracut supports `hostonly=no`, which produces an initramfs that works on any hardware. This is critical for a container image that may be deployed to diverse bare-metal and VM targets.
-3. **Container build integration** — The initramfs is built inside the container during the `bootc` package post-install hook (`bootc-finalize`), producing a fully self-contained deployed image.
+> We prefer a kernel developed by a random contributor that applies recent security patches over
+> an old official kernel that is obsolete and has security holes, if we have the choice.
+
+Maintaining a kernel per device is the single largest sink of effort in mobile Linux projects.
+LineageOS already maintains vendor kernels for 100+ devices with monthly ASB backports — that work
+is reused, not duplicated. The pipeline does **not** recompile a kernel per device: a single
+global kernel is built per major version, and device support is added via an external kernel
+module package that plugs into the global block.
+
+If there is nothing to optimise or fix in the kernel output of the external device-support
+module, the pipeline does not rebuild it — it builds on an already-packaged, functional source.
 
 ### Risks
 
-- dracut is not the Debian default, so some Debian-specific hooks or configurations may not be applied automatically.
-- The module list (`bootc`, `lvm`, `ostree`) must be kept in sync with upstream dracut changes.
+- The upstream LineageOS kernel maintainer may abandon the device. The `kernel_repo` field is a
+  git URL; if the repo disappears, the build breaks. Mitigated by the multi-source ingestion
+  (the `sources[]` array records provenance) and by the ability to point at a fork.
+- A vendor kernel may have unfixed CVEs that LineageOS has not backported. The trade-off is
+  accepted: a maintained-by-someone-else kernel with recent ASB patches is preferable to an
+  abandoned official kernel with known holes.
 
 ### Alternative
 
-Use `initramfs-tools` and write custom hooks for ostree/bootc support. This would require maintaining a significant amount of custom initramfs logic that dracut already provides upstream.
+Maintain a kernel per device in this repository. Rejected — the project would end up maintaining
+hundreds of kernels, which is the exact failure mode the founding principle forbids.
 
 ---
 
-## 4. ifupdown2 Instead of systemd-networkd
+## 3. VNDK-Driven Halium Versioning
 
 ### What we do
 
-The image uses **ifupdown2** (repacked from Proxmox sources with bootc-specific patches) as the network manager, instead of Debian's increasingly default `systemd-networkd`.
+The `vndk` field in `device.yml` — not the displayed Android version — determines the
+`halium_version` and the hybris patch set applied to the kernel.
 
 ### Why it is necessary
 
-1. **Bridge and bond support** — ifupdown2 has mature, well-tested support for Linux bridges (`bridge_ports`), VLANs, and bonding, which `systemd-networkd` handles less gracefully, especially in complex hypervisor or multi-interface setups.
-2. **Familiar interface configuration** — The `/etc/network/interfaces` format is familiar to Debian administrators and well-documented. Downstream projects (like DaemonCores-VE) rely on this format for their network topology.
-3. **Proxmox ecosystem compatibility** — ifupdown2 is the network manager used by Proxmox VE. Using it in the base image ensures downstream layers do not need to replace the network stack.
+Google now allows vendors to run a newer Android on top of an older VNDK. The VNDK defines the
+native API surface that Halium must match; the displayed Android version does not. A OnePlus 11
+running Android 15 reports VNDK 33 (Android 13), and the `device.yml` must record `vndk: "33"` /
+`halium_version: "13.0"`. Deriving the Halium version from the displayed Android version would
+apply the wrong hybris patch set and break the build.
+
+The `vndk` is obtained via `adb shell getprop | grep vndk` (ADB probe) or from a firmware dump
+(`aospdtgen`). The schema enforces the pattern `^(2[7-9]|3[0-5]|current)$` and the
+`halium_version` enum (`7.1` through `14.0`).
 
 ### Risks
 
-- ifupdown2 is not the default on modern Debian, which may surprise users expecting `systemd-networkd`.
-- The package is repacked from Proxmox sources, introducing a dependency on an external repository.
+- A device on a VNDK not in the schema range is rejected by CI. The range covers Android 8.1
+  (VNDK 27) through Android 15 (VNDK 35); devices outside this range are pre-Treble and need
+  `twrpdtgen` instead of `aospdtgen`.
+- The VNDK may change after a vendor OTA. The `device.yml` is pinned to a snapshot; if the
+  vendor updates the VNDK, the descriptor needs a new PR.
 
 ### Alternative
 
-Use `systemd-networkd` with `.network` units. This would require rewriting all network configuration for downstream layers and losing bridge/bond features that ifupdown2 handles natively.
+Derive the Halium version from the displayed Android version. Rejected — it produces the wrong
+hybris patch set on any device where the VNDK and the Android version diverge, which is now the
+common case on recent hardware.
 
 ---
 
-## 5. systemd-timesyncd Repack
+## 4. The `device.yml` Contract (Single Source of Truth)
 
 ### What we do
 
-`systemd-timesyncd` is repacked with a single drop-in that adds `After=network-online.target` and `Wants=network-online.target` to `systemd-timesyncd.service`.
+Every device is described by exactly one `device/<codename>/device.yml`, validated against
+`device/_schema.yml` (JSON Schema draft 2020-12). CI rejects an invalid descriptor before any
+build runs.
 
 ### Why it is necessary
 
-In a bootc environment, `systemd-timesyncd` attempts to reach NTP servers before the network interface is up, causing spurious service failures at boot. The drop-in ensures timesyncd waits for network connectivity before starting.
+A single, schema-validated descriptor per device is what makes the "30 seconds to add a device"
+target realistic. The user runs `scripts/probe.sh` on their existing Android, gets a `device.yml`,
+opens a PR, and the CI validates it against the schema — review is near-instant because the schema
+does the mechanical checking. Without a contract, every PR would need a human to verify the
+fields by hand, which does not scale to 600+ devices.
+
+The schema enforces:
+
+- Required fields (`codename`, `vendor`, `model`, `vndk`, `kernel_repo`, `defconfig`,
+  `partition_layout`, `halium_version`, `status`, `sources`)
+- Format patterns (`codename` = `^[a-z0-9_]+$`, `kernel_repo` = `^https://github\.com/`,
+  `defconfig` = `^[a-zA-Z0-9_-]+_defconfig$`)
+- Enumerations (`halium_version` 7.1–14.0, `status` booted/partial/functional/full, `sources`
+  from a fixed list)
+- Provenance (`sources[]` min 1 item, each with `name` + `url`)
 
 ### Risks
 
-- The repack must be rebuilt whenever the base `systemd-timesyncd` package is updated in Debian.
-- A single drop-in is a minimal change, but any repack introduces maintenance overhead.
+- A valid descriptor is not necessarily a *correct* descriptor — the schema checks the format,
+  not whether the `defconfig` actually boots. The `status` field carries the transparency: a
+  `booted` device is honestly labelled as "the kernel boots, that's it".
+- The schema must evolve as new Halium versions and source types appear. The enum lists are
+  intentionally bounded; adding a new value is a schema PR.
 
 ### Alternative
 
-Use `chrony` instead of `systemd-timesyncd`. Chrony is more robust in offline-first scenarios but is a heavier dependency. For a base image, `systemd-timesyncd` is sufficient and lighter.
+Free-form per-device README files. Rejected — unstructured docs cannot be validated by CI and
+do not scale to the target device count.
 
 ---
 
-## 6. Secure Boot MOK Enrollment
+## 5. CI in a Separate Repository (DaemonCores-CI)
 
 ### What we do
 
-The `grub-efi-amd64-signed` package includes a `postinst` script that queues MOK (Machine Owner Key) enrollment automatically on package install. On the first reboot after installation, the firmware launches the MokManager screen to enroll the signing key.
+The CI workflows live in [DaemonCores-CI](https://github.com/DaemonCores/DaemonCores-CI), not in
+this repository. This repository holds the scripts, configs, `device.yml` descriptors, and docs;
+DaemonCores-CI holds the workflows and the ARM/AMD build matrices that call those scripts.
 
 ### Why it is necessary
 
-UEFI Secure Boot requires every EFI binary in the boot chain to be signed by a trusted key. The standard Debian `shim-signed` package is signed by Microsoft, but GRUB itself is not signed for Secure Boot on custom images. By generating our own signing key, signing GRUB with it, and enrolling it via MOK, we enable Secure Boot on systems that ship with the Microsoft CA in firmware.
+The split keeps the source of truth (this repo) forkable and reviewable independently of the
+execution infrastructure. A contributor adding a device only needs to touch `device/` and the
+schema; they never need to read or modify a workflow. The workflows can be refactored, retooled,
+or migrated to a different CI provider without churning the device database or the build scripts.
+
+It also matches the debian-bootc / DaemonCores-CI split the project inherits from: the
+debian-bootc template already uses DaemonCores-CI for its reusable workflows (`bootc-build.yml`,
+`iso-builder.yml`). DaemonCores-Phone reuses the same pattern.
 
 ### Risks
 
-- The user must manually confirm MOK enrollment on first boot. If they skip it, Secure Boot remains disabled for GRUB.
-- The signing key must be kept secure. If the private key (`SB_SIGNING_KEY`) is compromised, an attacker could sign malicious EFI binaries that pass Secure Boot verification.
+- A change to a script in this repo may break a workflow in DaemonCores-CI that is not updated in
+  the same PR. Mitigated by the workflows calling scripts by tag or by pinning, and by running
+  the workflow on the PR via `workflow_dispatch`.
+- Two repositories to maintain instead of one. Accepted for the separation-of-concerns benefit.
 
 ### Alternative
 
-Disable Secure Boot entirely and rely on TPM or measured boot for integrity. This would work on systems where Secure Boot is not required, but it removes a layer of protection against bootloader-level attacks.
+Monorepo with workflows in `.github/workflows/`. Rejected — it couples the device database to
+the CI infrastructure and forces every device contributor to reason about workflows.
 
 ---
 
-## 7. Privileged Container in ISO Workflow
+## 6. bootc/OSTree on a Phone
 
 ### What we do
 
-The ISO generation job (`DaemonCores-CI/.github/workflows/iso-builder.yml`) runs inside an `almalinux:10` container with `options: --privileged`.
+The rootfs is a Debian Trixie ARM64 bootc/OSTree image, adapted from the
+[debian-bootc](https://github.com/DaemonCores/debian-bootc) base.
 
 ### Why it is necessary
 
-The ISO build process requires `mount -o loop` to extract and repack the Fedora netinstall ISO's squashfs and EFI partitions. In a standard unprivileged container, loop device access is blocked by the kernel's mount namespace restrictions. `--privileged` grants the necessary capabilities (`CAP_SYS_ADMIN`) and device access to perform loop mounts.
+- **Atomic updates** — the whole OS is replaced in one transaction. A phone is a device people
+  depend on daily; a failed update that bricks it is unacceptable. bootc/OSTree keeps every
+  previous deployment and rolls back from the bootloader.
+- **Rollback** — every previous deployment is kept on disk; a bad update never bricks the phone.
+- **Debian ecosystem** — `apt`, the full Debian archive, and every Debian package run natively.
+  This is the "standard" half of "standard, autonomous, for all devices".
+- **Shared infrastructure** — the bootc/OSTree stack is the same one that powers DaemonCores-VE
+  and debian-bootc; the smartphone inherits a proven, maintained base rather than reinventing
+  an update mechanism.
 
-### What we do to mitigate the risk
+### Risks
 
-- The privileged container is **isolated to a single dedicated job** (`build-iso`). No other jobs in the pipeline run privileged.
-- The job does not process untrusted input. The only external data fetched is:
-  - The Fedora netinstall ISO from `archives.fedoraproject.org`
-  - The OCI image from GHCR (verified with `cosign verify` before embedding)
-  - The `cosign` RPM from GitHub Releases (SHA-256 verified)
-- The container image is pinned to `almalinux:10`, not `latest`.
-- The job runs on GitHub-hosted `ubuntu-latest` runners, which are ephemeral and destroyed after the job completes.
+- bootc/OSTree is designed for servers and desktops; the phone boot path is different (Android
+  bootloader → `boot.img` → Halium initramfs → rootfs). The initramfs bridges this — it performs
+  the Halium early boot and then hands off to the bootc/OSTree rootfs.
+- The rootfs lives on a partition the Android bootloader does not manage; the update model is
+  atomic on the rootfs side, but the `boot.img` (kernel + initramfs) is updated separately via the
+  pipeline's GitHub Releases. A kernel update requires re-flashing `boot.img`.
 
 ### Alternative
 
-Run the ISO build on a self-hosted runner with `/dev/loop*` pre-configured and pass `--device /dev/loop0` instead of `--privileged`. This would require maintaining a self-hosted runner infrastructure, which we consider higher overhead than accepting the isolated privileged container for this single job.
+A traditional mutable rootfs with `apt upgrade`. Rejected — no rollback, no atomicity, and a
+failed `apt` halfway through leaves the phone in a broken state with no recovery path.
 
 ---
 
-## 8. Debian Trixie (Testing) as Base
+## 7. Debian Trixie (Testing) as Base
 
 ### What we do
 
-debian-bootc is built on Debian 13 (Trixie), which is currently the **testing** distribution, not stable.
+DaemonCores-Phone is built on Debian 13 (Trixie), which is currently the **testing** distribution,
+not stable.
 
 ### Why testing instead of stable
 
-1. **Kernel recency** — bootc and the underlying ostree/dracut stack require kernel features (e.g., composefs, fs-verity, newer systemd) that are not available or are too old in Debian Stable (Bookworm, 12). Trixie provides a kernel and userspace new enough to satisfy the dependency chain.
-2. **bootc/ostree evolution** — The bootc and ostree ecosystems are evolving rapidly. bootc 1.x, composefs integration, and dracut module changes are all landing in Debian testing before they reach stable. Building on stable would mean backporting a significant fraction of the base infrastructure, defeating the purpose of using a standard Debian base.
-3. **Future stability** — Debian Trixie will become the next stable release. Tracking testing now means the project will naturally migrate to stable when Trixie is frozen, with minimal disruption.
+1. **Kernel recency** — bootc, ostree, and the Halium stack require kernel and userspace features
+   (composefs, fs-verity, newer systemd, libhybris against recent glibc) that are too old in
+   Debian Stable (Bookworm, 12). Trixie provides a kernel and userspace new enough to satisfy the
+   dependency chain.
+2. **bootc/ostree evolution** — the bootc and ostree ecosystems are evolving rapidly. Building on
+   stable would mean backporting a significant fraction of the base infrastructure.
+3. **Future stability** — Debian Trixie will become the next stable release. Tracking testing now
+   means the project naturally migrates to stable when Trixie freezes, with minimal disruption.
+4. **ARM64 maturity** — Trixie's ARM64 port is the primary mobile-relevant Debian port; the
+   toolchain and archive are well-tested on the architecture the project targets.
 
 ### Risks
 
-- Testing packages can change without notice. The monthly automated rebuilds (`cron: '0 4 1 * *'`) mitigate this by rebuilding from scratch with the latest testing snapshot.
-- Security updates in testing are not as strictly coordinated as in stable. The trade-off is accepted for the features gained.
+- Testing packages can change without notice. The CI rebuilds mitigate this by rebuilding from
+  scratch on a cadence, incorporating the latest testing snapshot.
+- Security updates in testing are not as strictly coordinated as in stable. The trade-off is
+  accepted for the features gained.
 
 ### Alternative
 
-Wait for Debian 14 (the next stable release) and freeze on it. This would delay the project by 1–2 years. The current approach is to track Trixie and migrate to the next stable release when it is published.
+Wait for Debian 14 (the next stable release) and freeze on it. This would delay the project by
+1–2 years. The current approach tracks Trixie and migrates to the next stable release when it is
+published.
 
 ---
 
-## 9. No SHA Pinning for GitHub Actions
+## 8. CLI-First, UI Deferred to Phase 2
 
 ### What we do
 
-GitHub Actions in this repository use version tags (e.g., `actions/checkout@v7`, `sigstore/cosign-installer@v3`) instead of pinning to specific commit SHAs.
+The immediate target is a fully supported CLI boot. The UI and user-friendliness are a separate
+Phase 2, deferred until the CLI base is solid.
 
-### Why we use tags instead of SHAs
+### Why it is necessary
 
-Pinning actions to commit SHAs provides supply-chain immutability against tag mutation, but shifts the **entire maintenance burden onto the repository owner**: every dependency update requires a manual SHA rotation. In practice this leads to perpetually outdated pins — which provide false security rather than real security.
+> Don't worry about the UI or user-friendliness for now. We'll debate that in a second phase,
+> because I really want to make the Android of Linux, and that deserves its own design.
 
-This repository instead relies on **Dependabot** (`.github/dependabot.yml`) for weekly automated pull requests covering both GitHub Actions and the Docker base image. Updates are reviewed and merged explicitly, providing full auditability without manual tracking overhead. All actions used are from well-established, high-visibility namespaces (`actions/*`, `sigstore/*`, `morph027/*`) where tag mutation would be immediately detected by the community.
+A phone UI is a design problem of its own — it is not a thin layer over a CLI base. Deferring it
+lets the project nail the hard infrastructure first (Halium pipeline, bootc/OSTree, device
+database) without the UI constraining the base design. The result is a base that any UI
+(Phosh, Plasma Mobile, a custom "Android of Linux" shell) can build on.
 
 ### Risks
 
-- A compromised action in a trusted namespace could inject malicious code. Dependabot would surface the update, but a human must review it before merge.
-- Tag mutation by a malicious insider at GitHub or a third-party action maintainer is theoretically possible. The namespaces chosen have high community scrutiny.
+- The project is not usable as a daily phone until the UI lands. Accepted — the README clearly
+  labels the project as work-in-progress, and the device `status` field is transparent about what
+  works today.
+- A CLI-first base may bake in assumptions (serial console, no touch input in the base image) that
+  the UI layer must override. Mitigated by the bootc/OSTree layering model — the UI is a
+  downstream layer `FROM` the base, not a modification of it.
 
 ### Alternative
 
-Pin every action to a SHA and maintain a manual rotation schedule. Rejected because the maintenance overhead is not justified for a project with a single maintainer and monthly rebuild cadence. The Dependabot + review model provides a better trade-off.
+Build the UI in parallel with the base. Rejected — it couples the UI design to an unstable base
+and forces decisions (input stack, display server, shell) before the base is solid.
 
 ---
 
-## 10. `COSIGN_EXPERIMENTAL: 1`
+## 9. Microkernel: Deferred (Monolithic Linux for Now)
 
 ### What we do
 
-The reusable ISO workflow (iso-builder.yml in DaemonCores-CI) sets the environment variable `COSIGN_EXPERIMENTAL=1` before running `cosign verify`.
+The project uses a monolithic Linux kernel. A microkernel was evaluated and deferred.
 
-### Why it is enabled
+### Why it is necessary
 
-`COSIGN_EXPERIMENTAL=1` enables experimental features in the cosign CLI. Historically, this flag was required for keyless Sigstore verification workflows (OIDC-based certificate identity verification) before they were promoted to stable in later cosign versions. The project started using cosign when keyless signing was still experimental, and the flag was retained for compatibility with the specific cosign version pinned in the ISO workflow.
+A research pass (Roadmap P05) evaluated seL4, Zircon/Fuchsia, Redox, and Minix 3. None has a
+viable smartphone port today:
 
-The flag may become unnecessary as cosign matures, but its presence is harmless: it simply opts in to features that are stable in newer releases and experimental in older ones.
+- **seL4** — no smartphone port. The only credible long-term option; watched.
+- **Zircon / Fuchsia** — Nest only; smartphone deprecated.
+- **Redox** — boot POC 2025; zero drivers.
+- **Minix 3** — dormant.
+
+The Halium approach (vendor kernel + external device-support module) is already the "juste
+milieu" (middle ground) the project seeks — a full kernel, but with device support added as a
+module rather than compiled in per device. A microkernel would need a full driver stack that does
+not exist today for any smartphone.
 
 ### Risks
 
-- Experimental features may change behaviour across cosign versions. The cosign version is pinned via the SHA-256 verified RPM download in the ISO workflow, so the behaviour is deterministic within a given build.
-- The flag could mask deprecation warnings. Monthly rebuilds surface any CLI changes.
+- A monolithic kernel has a larger attack surface than a microkernel. Mitigated by the
+  bootc/OSTree rollback model and by the vendor kernel ASB backports.
+- The project is locked into the Linux/Halium stack for the medium term. Accepted — there is no
+  viable alternative today.
 
 ### Alternative
 
-Remove the flag and rely on the stable cosign verification path. This would require verifying that the pinned cosign version supports keyless verification without the flag. Given that the flag is harmless and the version is pinned, we have not prioritized removing it.
+Build on seL4. Rejected — no smartphone port, no Android driver story. Watched for the long
+term.
+
+---
+
+## 10. Mega-Kernel Approach: Rejected
+
+### What we do
+
+A mega-kernel merging all vendor kernel trees via `ifdef` was evaluated and rejected.
+
+### Why it is necessary
+
+Technical evidence:
+
+- `allyesconfig` builds cause OOM on 32 GB machines (Peter Zijlstra patch, Feb 2023,
+  `lwn.net/Articles/922654/`).
+- LTO dead code elimination is limited because exported symbols must be preserved for future
+  modules (`lwn.net/Articles/512548/`).
+- Symbol namespaces govern access, not collision prevention
+  (`docs.kernel.org/core-api/symbol-namespaces.html`).
+- The Android GKI model (one kernel plus vendor modules) is the correct approach but only applies
+  to Android 12+ devices. For older devices, the zero-build-kernel approach (clone vendor kernel,
+  apply Halium patches, compile) remains the only viable path.
+
+### Decision
+
+Keep the current approach. No mega-kernel.
+
+### Alternative
+
+Merge all vendor kernel trees via `ifdef` into a single mega-kernel. Rejected — OOM on 32 GB
+machines, LTO dead-code limits, symbol namespaces do not prevent collisions, and the Android GKI
+model only applies to Android 12+ devices.
+
+---
+
+## 11. Waydroid as Central Brick
+
+### What we do
+
+Waydroid is not a Phase 2 bonus. It is a central architectural brick providing Android app
+compatibility via LineageOS-based container images with native Halium support.
+
+### Why it is necessary
+
+The architecture is:
+
+- **Layer 1** — hardware support via Halium vendor kernels
+- **Layer 2** — Galium distribution, Debian Trixie + bootc/OSTree
+- **Layer 3** — Android compatibility via Waydroid
+
+This is the same model as ChromeOS (Linux + Android container). Waydroid images are based on
+LineageOS, creating a direct synergy with the pipeline that scrapes LineageOS hudson for kernel
+sources.
+
+### Alternative
+
+Treat Waydroid as a Phase 2 bonus, deferred with the UI. Rejected — it is a central
+architectural brick, not a UI concern.
+
+### Sources
+
+- `docs.waydro.id`
+- `docs.waydro.id/development/compile-waydroid-lineage-os-based-images`
 
 ---
 
@@ -244,21 +398,24 @@ Remove the flag and rely on the stable cosign verification path. This would requ
 
 | Decision | Justification | Risk Level | Alternative |
 |---|---|---|---|
-| Default root password | Fallback if firstboot wizard fails | Low (temporary, replaced immediately) | Remove fallback; risk lockout |
-| Fedora GRUB fork | BLS (`blscfg`, `blsuki`) modules required by bootc/ostree | Medium (fork divergence from upstream) | Patch Debian GRUB with BLS modules |
-| dracut instead of initramfs-tools | Native bootc/ostree module support, `hostonly=no` | Low (well-maintained upstream) | Custom initramfs-tools hooks for ostree |
-| ifupdown2 instead of systemd-networkd | Bridge/bond support, Proxmox ecosystem compatibility | Low (repack from audited sources) | systemd-networkd with `.network` units |
-| systemd-timesyncd repack | Prevent spurious boot failures by ordering after network-online | Very low (single drop-in) | Use chrony instead |
-| Secure Boot MOK enrollment | Enable Secure Boot on standard UEFI firmware with Microsoft CA | Medium (key management burden) | Disable Secure Boot, rely on TPM |
-| Privileged ISO container | Required for `mount -o loop` | Low (isolated to single job, ephemeral runner) | Self-hosted runner with loop devices |
-| Debian Trixie (testing) | Kernel recency, bootc/ostree evolution, future stability | Medium (testing instability) | Wait for Debian 14 stable |
-| No SHA pinning for Actions | Dependabot + review > manual SHA rotation | Low (trusted namespaces) | Pin all SHAs manually |
-| `COSIGN_EXPERIMENTAL: 1` | Historical requirement for keyless verification | Very low (pinned cosign version) | Verify stable path and remove |
+| Halium over mainline | 600+ devices vs ~200–300; zero reverse engineering | Medium (downstream kernel, libhybris layer) | Mainline per device (postmarketOS) |
+| Vendor kernels, zero maintenance | LineageOS ASB backports reused; no per-device kernel work | Medium (upstream abandonment) | Maintain a kernel per device |
+| VNDK-driven Halium versioning | VNDK defines the API surface, not the displayed Android version | Low (schema-enforced) | Derive from Android version (wrong patch set) |
+| `device.yml` contract (schema-validated) | "30 seconds to add a device" via CI schema validation | Low (format, not correctness) | Free-form per-device README |
+| CI in DaemonCores-CI | Source of truth forkable independently of execution | Low (two repos) | Monorepo with workflows |
+| bootc/OSTree on phone | Atomic updates, rollback, Debian ecosystem | Medium (phone boot path bridged by initramfs) | Mutable rootfs with apt upgrade |
+| Debian Trixie (testing) | Kernel/userspace recency for Halium + bootc | Medium (testing instability) | Wait for Debian 14 stable |
+| CLI-first, UI deferred | UI is a separate design problem; nail the base first | Low (project labelled WIP) | Build UI in parallel |
+| Monolithic Linux (microkernel deferred) | No viable microkernel smartphone port today | Medium (attack surface) | seL4 (no port, watched) |
+| Mega-kernel approach (rejected) | allyesconfig OOM on 32 GB; LTO dead-code limits; symbol namespaces govern access not collision; GKI only Android 12+ | N/A (rejected) | Keep zero-build-kernel approach |
+| Waydroid as central brick | Android app compatibility via LineageOS containers; native Halium support; same model as ChromeOS | Low (actively maintained, in Debian 14+) | Treat as Phase 2 bonus (rejected) |
 
 ---
 
 ## Related Documents
 
-- [`README.md`](../README.md) — Full project documentation
-- [`docs/architecture.md`](architecture.md) — Architecture overview, build pipeline, first-boot flow
-- [`Containerfile`](../Containerfile) — Image composition definition
+- [`README.md`](../README.md) — Project overview, device status, quick start
+- [`docs/architecture.md`](architecture.md) — Architecture: Halium pipeline, `device.yml`, bootc/OSTree, CI split
+- [`docs/minimal.md`](minimal.md) — The smartphone minimal variant
+- [`device/_schema.yml`](../device/_schema.yml) — JSON Schema validating every `device.yml`
+- [`todo/ROADMAP.md`](../todo/ROADMAP.md) — Development roadmap
