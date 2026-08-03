@@ -46,6 +46,7 @@ P03 — Kernel: Halium-patched vendor kernel, zero maintenance
 - PLAN: The device.yml contains kernel_repo (git URL) and defconfig. The pipeline clones, patches, compiles. Zero manual maintenance.
 - STATUS: DONE
 - EVIDENCE: device/beryllium/device.yml, scripts/build-halium.sh
+- NOTE: Halium/hybris-patches contains only userspace AOSP patches, not kernel patches. The kernel-side Halium requirement (binder, ashmem, etc.) is covered by config-fragment-standard (P04) via the Kconfig fragment, not via patches.
 <!-- END P03 -->
 
 <!-- BEGIN P04 -->
@@ -182,7 +183,8 @@ P16 — Waydroid Android compatibility layer
 - REQ (verbatim): "prompte.md lines 671-788"
 - DECISION: Waydroid is a central architectural brick (Layer 3), not a Phase 2 bonus. Native Halium support confirmed (docs.waydro.id). Baked into the forge's base rootfs artifact.
 - PLAN: Integrate Waydroid vendor images (HALIUM variant) into the bootc/OSTree base rootfs artifact. Kernel requirements already covered by config-fragment-standard (P04).
-- STATUS: TODO
+- STATUS: OUT_OF_SCOPE
+- NOTE: Waydroid is a downstream product concern. The forge only ensures kernel compatibility via config-fragment-standard (P04).
 <!-- END P16 -->
 
 Future Product
