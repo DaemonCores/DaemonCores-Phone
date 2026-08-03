@@ -9,3 +9,7 @@ Archive.zip
 # Secrets
 .env
 .secrets
+
+# Python
+__pycache__/
+*.pyc
