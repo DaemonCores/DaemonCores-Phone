@@ -316,8 +316,39 @@ properties:
     examples:
       - - "Audio routing via tinymix (typical SDM845)"
 
+  maintainer:
+    type: string
+    description: "GitHub username of the device maintainer"
+    examples:
+      - "alice"
+      - "Martinvlba"
+
+  kernel_maintained:
+    type: boolean
+    description: "Whether the vendor kernel receives regular security patches"
+
+  security_patches:
+    type: string
+    description: "Date of the last known security patch (YYYY-MM-DD)"
+    examples:
+      - "2026-07"
+
+  update_chain:
+    type: boolean
+    description: "Whether the device is enabled in the automated update chain"
+
+  tested_by:
+    type: integer
+    description: "Number of people who confirmed the device works"
+    minimum: 0
+
   notes:
     type: string
     description: "Free-form notes about this device (quirks, known issues, special instructions)"
     examples:
       - "Requires firmware blobs from MIUI 12.0.3"
+
+  enable:
+    type: boolean
+    default: false
+    description: "Whether this device is enabled in the CI/CD build chain. Set to true by a maintainer after the device is confirmed working. Default false for auto-scraped devices."

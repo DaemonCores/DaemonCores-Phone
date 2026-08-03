@@ -10,6 +10,7 @@
 codename: beryllium
 vendor: Xiaomi
 model: "POCO F1"
+enable: true
 
 # Android Vendor NDK version. Critical: determines the Halium version and the
 # hybris patch set. The POCO F1 shipped with Android 8.1 (VNDK 27) and was
@@ -85,3 +86,24 @@ known_quirks:
 # Free-form notes. The POCO F1 is the reference device for the standard pipeline;
 # firmware blobs must match the MIUI build the vendor partition was extracted from.
 notes: "Reference device for the DaemonCores-Phone standard pipeline. Verify firmware blobs from matching MIUI build."
+
+# --- P23 status-table fields ---
+# Values consumed by scripts/generate-status-table.py to produce the device
+# status table published in GitHub Releases by CI. All optional.
+
+# GitHub username of the device maintainer. Empty string = no maintainer yet.
+maintainer: ""
+
+# Whether the vendor kernel receives regular security patches. The LineageOS
+# SDM845 kernel gets monthly Android Security Bulletins.
+kernel_maintained: true
+
+# Date of the last known security patch applied to the vendor kernel (YYYY-MM).
+security_patches: "2026-07"
+
+# Whether the device is enabled in the automated update chain. beryllium is
+# the reference device but is not yet wired into the automated update pipeline.
+update_chain: false
+
+# Number of people who confirmed the device works (booted + functional).
+tested_by: 1
