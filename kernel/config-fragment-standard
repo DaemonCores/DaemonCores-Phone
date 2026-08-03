@@ -1,0 +1,99 @@
+# WIP — Work in progress. This kernel config fragment is part of the
+# DaemonCores-Phone standard Halium pipeline and is under active
+# development. The option set is sourced from docs/architecture.md but
+# may change until the pipeline reaches a tagged milestone.
+# kernel/config-fragment-standard
+# DaemonCores-Phone — standard kernel config fragment
+#
+# Merged into EVERY device defconfig via scripts/kconfig/merge_config.sh
+# (see docs/architecture.md §6). Carries three categories of options required
+# across the whole fleet: Waydroid dependencies, mobile optimisations, and
+# Halium hybris requirements. A single merge step covers all three at once.
+#
+# Format: Kconfig fragment accepted by scripts/kconfig/merge_config.sh.
+# Every non-comment, non-blank line is `CONFIG_<NAME>=(y|m|n|"...")`.
+# Unknown symbols are warned (not failed) by merge_config.sh, so only
+# standard upstream Linux kernel option names are used here.
+
+# =============================================================================
+# 1. Waydroid dependencies
+# =============================================================================
+# Source: docs/architecture.md §6 (Waydroid dependencies) and §9 (kernel
+# requirements). Required by the Waydroid Android compatibility layer
+# (docs.waydro.id). These seven options are the verbatim set listed in
+# docs/architecture.md §6.
+CONFIG_ANDROID=y
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y
+CONFIG_PSI=y
+CONFIG_IPV6=y
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_NAMESPACES=y
+
+# =============================================================================
+# 2. Mobile optimisations
+# =============================================================================
+# Source: docs/architecture.md §6 (Mobile optimisations). Concrete CONFIG_*
+# symbols for each subsystem listed there: CPUFreq, CPUIdle, Runtime PM,
+# Suspend/Resume, GPU DRM/MSM, Modem QMI_WWAN/MBIM, IIO sensors, HID I2C/SPI.
+
+# CPUFreq — dynamic CPU frequency scaling (drivers/cpufreq/)
+CONFIG_CPU_FREQ=y
+
+# CPUIdle — idle states for power saving (drivers/cpuidle/)
+CONFIG_CPU_IDLE=y
+
+# Runtime PM — runtime power management (drivers/base/power/runtime.c)
+CONFIG_PM_RUNTIME=y
+
+# Suspend/Resume — sleep/wake support (kernel/power/suspend.c)
+CONFIG_SUSPEND=y
+
+# GPU DRM/MSM — Qualcomm display stack (drivers/gpu/drm/msm/)
+CONFIG_DRM=y
+CONFIG_DRM_MSM=y
+
+# Modem — QMI_WWAN and MBIM for cellular data (drivers/net/usb/)
+CONFIG_USB_NET_QMI_WWAN=y
+CONFIG_USB_NET_MBIM=y
+
+# IIO sensors — accelerometer, proximity, light sensors (drivers/iio/)
+CONFIG_IIO=y
+
+# HID — Human Interface Device subsystem (drivers/hid/)
+CONFIG_HID=y
+
+# HID over I2C — touchscreens and other HID peripherals on I2C
+# Standard upstream symbol is CONFIG_I2C_HID (drivers/hid/i2c-hid/).
+CONFIG_I2C_HID=y
+
+# HID over SPI — touchscreens and other HID peripherals on SPI
+# Standard upstream symbol is CONFIG_SPI_HID (drivers/hid/spi-hid/).
+CONFIG_SPI_HID=y
+
+# =============================================================================
+# 3. Halium hybris requirements
+# =============================================================================
+# Source: docs/architecture.md §6 (Halium hybris requirements). The hybris
+# patch set needs the binder and ashmem (or binderfs on newer kernels)
+# infrastructure enabled. This section consolidates those so a single merge
+# step covers Waydroid, mobile, and Halium at once.
+
+# Binder devices — the three Android binder domains required by hybris:
+#   binder    — application binder
+#   hwbinder  — hardware binder (Treble)
+#   vndbinder — vendor binder (Treble)
+# Used by CONFIG_ANDROID_BINDERFS to populate /dev/binderfs at boot.
+CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
+
+# Disable the binder IPC self-test by default. The self-test is a debug
+# build-time check that hammers the binder; it is not wanted on production
+# mobile kernels. Set =n explicitly so a defconfig that defaults it to y is
+# overridden by this fragment.
+CONFIG_ANDROID_BINDER_IPC_SELFTEST=n
+
+# Ashmem — the legacy Android shared memory allocator. Required by hybris on
+# older vendor kernels (pre-5.11) that do not have binderfs/memfd replacement
+# wired up. On newer kernels with binderfs this is superseded but stays
+# harmless when present.
+CONFIG_ASHMEM=y

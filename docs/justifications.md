@@ -17,7 +17,9 @@ drivers, rather than porting each device to the mainline Linux kernel.
 ### Why it is necessary
 
 Mainline Linux supports only a handful of Android phones — the postmarketOS mainline ports cover
-~200–300 devices after years of manual work, and even then the support is often partial (Wi-Fi
+~200–300 devices after years of manual work (unverified estimate sourced from the pmOS wiki at the
+time of writing, 2026-08-01; the wiki was partially blocked by an Anubis challenge so the figure was
+not freshly re-verified; it may have changed), and even then the support is often partial (Wi-Fi
 broken, modem missing, camera basic). The proprietary Android drivers that ship with the device
 work on Android; Halium + libhybris make them work on a GNU/Linux userspace without reverse
 engineering. This is the same approach UBports and Droidian use, and it is the only approach that
@@ -61,12 +63,13 @@ other). The pipeline clones the repo, applies the Halium hybris patches, compile
 
 Maintaining a kernel per device is the single largest sink of effort in mobile Linux projects.
 LineageOS already maintains vendor kernels for 100+ devices with monthly ASB backports — that work
-is reused, not duplicated. The pipeline does **not** recompile a kernel per device: a single
-global kernel is built per major version, and device support is added via an external kernel
-module package that plugs into the global block.
-
-If there is nothing to optimise or fix in the kernel output of the external device-support
-module, the pipeline does not rebuild it — it builds on an already-packaged, functional source.
+is reused, not duplicated. The pipeline **compiles a kernel per device**, because each device has
+a different vendor kernel tree and a different `defconfig`: it clones the device-specific
+`kernel_repo`, applies the Halium hybris patches, merges `kernel/config-fragment-standard` into the
+device `defconfig`, and cross-compiles for ARM64. The forge therefore compiles per device, but it
+**maintains no kernel** — each `kernel_repo` is cloned as-is from its upstream maintainer and never
+forked into this repository. The device-support surface is carried entirely by the upstream vendor
+tree plus the standard config fragment merged at build time.
 
 ### Risks
 
@@ -228,12 +231,14 @@ failed `apt` halfway through leaves the phone in a broken state with no recovery
 
 ---
 
-## 7. Debian Trixie (Testing) as Base
+## 7. Debian Trixie (Testing) as the Base Rootfs Artifact
 
 ### What we do
 
-DaemonCores-Phone is built on Debian 13 (Trixie), which is currently the **testing** distribution,
-not stable.
+The forge produces a base rootfs artifact built on Debian 13 (Trixie), which is currently the
+**testing** distribution, not stable. This artifact is a **build output of the forge**, not
+the end-user product — a downstream mobile Linux distribution layers `FROM` it (see
+`architecture.md` §3.5).
 
 ### Why testing instead of stable
 
@@ -342,9 +347,10 @@ A mega-kernel merging all vendor kernel trees via `ifdef` was evaluated and reje
 Technical evidence:
 
 - `allyesconfig` builds cause OOM on 32 GB machines (Peter Zijlstra patch, Feb 2023,
-  `lwn.net/Articles/922654/`).
+  `lwn.net/Articles/922654/`; LWN content is subscriber-locked, an archive copy is at
+  `web.archive.org/web/2024/https://lwn.net/Articles/922654/`).
 - LTO dead code elimination is limited because exported symbols must be preserved for future
-  modules (`lwn.net/Articles/512548/`).
+  modules (`lwn.net/Articles/512548/`; archive: `web.archive.org/web/2024/https://lwn.net/Articles/512548/`).
 - Symbol namespaces govern access, not collision prevention
   (`docs.kernel.org/core-api/symbol-namespaces.html`).
 - The Android GKI model (one kernel plus vendor modules) is the correct approach but only applies
@@ -375,8 +381,15 @@ compatibility via LineageOS-based container images with native Halium support.
 The architecture is:
 
 - **Layer 1** — hardware support via Halium vendor kernels
-- **Layer 2** — Galium distribution, Debian Trixie + bootc/OSTree
+- **Layer 2** — base rootfs artifact, Debian Trixie + bootc/OSTree
 - **Layer 3** — Android compatibility via Waydroid
+
+> **Naming note.** Earlier drafts referred to Layer 2 as "Galium distribution". "Galium" was an
+> early product-concept name for the end-user distribution, not the forge's base artifact. It has
+> been retired here to avoid conflating the forge's build output (a base rootfs artifact that any
+> downstream product layers `FROM`) with the future end-user product (which has its own naming
+> process, see [`future-product.md`](future-product.md) §2). Layer 2 is the forge's base rootfs
+> artifact; the end-user distribution is a separate future product built on top of it.
 
 This is the same model as ChromeOS (Linux + Android container). Waydroid images are based on
 LineageOS, creating a direct synergy with the pipeline that scrapes LineageOS hudson for kernel
@@ -394,6 +407,64 @@ architectural brick, not a UI concern.
 
 ---
 
+## 12. Forge vs Distribution — Why DaemonCores-Phone Is Not a Linux Distribution
+
+### What we do
+
+DaemonCores-Phone is a **forge of mobile Linux systems**, not a Linux distribution. The forge
+produces build artifacts (a `boot.img` and a Debian Trixie + bootc/OSTree base rootfs artifact)
+that a downstream project turns into an end-user mobile Linux distribution with its own name,
+its own UI, and its own design pass. See [`future-product.md`](future-product.md) for the
+end-user product vision.
+
+The separation is the same as the one between [AOSP](https://source.android.com/) and the
+Pixel phone: AOSP is the forge (the source and build system); Pixel is a product built on it.
+DaemonCores-Phone is the forge; the future end-user distro is a product built on it.
+
+### Why it is necessary
+
+1. **Scope discipline** — a forge and a product optimize for different targets. A forge
+   optimizes for coverage, reproducibility, and downstream flexibility (one pipeline, 600+
+   devices, layerable base). A product optimizes for a single coherent user experience (one
+   UI, one app set, one onboarding flow, one brand). Conflating the two compromises both: the
+   forge bends its build generality to appease one product's UX, and the product is
+   constrained by the forge's build-time decisions.
+2. **Design freedom** — the end-user mobile Linux product ("the Android of Linux") deserves
+   its own design pass. The UI, the default app set, the onboarding flow, the branding, and the
+   commercial model are product decisions, not forge decisions. They belong to a separate
+   project with its own name, its own repository, and its own team. The forge must not bake any
+   of them into its base artifact.
+3. **Naming and identity** — the end-user distro will have a different name than
+   DaemonCores-Phone. The forge name describes the build system; the product name describes
+   the user-facing distribution. Keeping them separate from the start avoids a rebranding
+   crisis later and lets each name serve its audience (forge users are developers and product
+   teams; product users are end users).
+4. **Reuse and federation** — a forge can power multiple downstream products. A future
+   community could build a privacy-first distro, a gaming-focused distro, or an enterprise
+   distro, all `FROM` the same base rootfs artifact. Tying the forge to a single product
+   forecloses that possibility.
+
+### Risks
+
+- The separation may confuse contributors who expect a single flashable distro. Mitigated by
+  the README and this document stating clearly what the forge ships vs what the product adds,
+  and by `docs/future-product.md` capturing the product vision so the destination is visible.
+- The future product depends on the forge producing a clean, layerable base artifact. This is
+  a real constraint on the forge — the base must not bake in UI assumptions or serial-console-
+  only constraints. Tracked as P15 in the roadmap.
+- The two-project model requires coordination between the forge team and the product team. The
+  forge's base artifact is the contract between them; it must stay stable enough to layer on.
+
+### Alternative
+
+Ship DaemonCores-Phone as a single end-user distribution. Rejected — it conflates a build
+system with a product, compromises the forge's generality, forecloses multi-product reuse, and
+forces the UI / branding / commercial model decisions to be made inside the forge before the
+base is solid. The AOSP/Pixel separation exists precisely because the concerns are different;
+DaemonCores-Phone follows the same split.
+
+---
+
 ## Summary Table
 
 | Decision | Justification | Risk Level | Alternative |
@@ -408,7 +479,7 @@ architectural brick, not a UI concern.
 | CLI-first, UI deferred | UI is a separate design problem; nail the base first | Low (project labelled WIP) | Build UI in parallel |
 | Monolithic Linux (microkernel deferred) | No viable microkernel smartphone port today | Medium (attack surface) | seL4 (no port, watched) |
 | Mega-kernel approach (rejected) | allyesconfig OOM on 32 GB; LTO dead-code limits; symbol namespaces govern access not collision; GKI only Android 12+ | N/A (rejected) | Keep zero-build-kernel approach |
-| Waydroid as central brick | Android app compatibility via LineageOS containers; native Halium support; same model as ChromeOS | Low (actively maintained, in Debian 14+) | Treat as Phase 2 bonus (rejected) |
+| Waydroid as central brick | Android app compatibility via LineageOS containers; native Halium support; same model as ChromeOS | Low (actively maintained; distribution availability tracked on docs.waydro.id) | Treat as Phase 2 bonus (rejected) |
 
 ---
 

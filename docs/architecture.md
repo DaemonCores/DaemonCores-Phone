@@ -11,7 +11,13 @@ DaemonCores-CI.
 
 ## 1. Project Overview
 
-DaemonCores-Phone is a Linux distribution for smartphones built on four pillars:
+DaemonCores-Phone is **not a Linux distribution**. It is a **forge of mobile Linux systems** —
+a build system that produces mobile Linux systems the way [AOSP](https://source.android.com/)
+produces Android systems. The end-user distribution is a **separate future product** with its
+own name, its own UI, and its own design pass (see [`future-product.md`](future-product.md)).
+What this forge produces today are build artifacts: a `boot.img` and a Debian Trixie +
+bootc/OSTree **base rootfs artifact** that any downstream mobile Linux product can layer on.
+The forge is built on four pillars:
 
 1. **Halium standard** — proprietary Android drivers run unmodified via libhybris, the same
    approach used by UBports and Droidian. No reverse engineering, no mainline port per device.
@@ -27,7 +33,9 @@ DaemonCores-Phone is a Linux distribution for smartphones built on four pillars:
    github.com/waydroid/waydroid/releases
 
 The project targets **600+ devices** from a single pipeline — an order of magnitude more than
-manual-port projects (postmarketOS ~200–300, UBports 111) — because it reuses vendor kernels and
+manual-port projects (postmarketOS ~200–300, unverified estimate sourced from the pmOS wiki at the
+time of writing, 2026-08-01; the wiki was partially blocked by an Anubis challenge so the figure was
+not freshly re-verified; UBports 111) — because it reuses vendor kernels and
 the Halium compatibility layer instead of porting each device to mainline.
 
 ---
@@ -47,7 +55,7 @@ per-device kernel work, per-SoC strategy, or a special case is rejected.
 
 | Repository | Role | Contents |
 |---|---|---|
-| **DaemonCores-Phone** (this repo) | Source of truth | `device.yml` descriptors, build scripts (`scripts/build-halium.sh`, `scripts/repack-bootimg.sh`), ingestion scripts (`scripts/scrape-lineage.py`, `scripts/enrich-ubports.py`, `scripts/enrich-halium.py`, `scripts/enrich-aospdtgen.py`), the ADB probe (`scripts/probe.sh`), the kernel config fragment (`kernel/config-fragment-standard`), the `Containerfile`, the initramfs (`src/initramfs/`), and the docs |
+| **DaemonCores-Phone** (this repo) | Source of truth | `device.yml` descriptors, build scripts (`scripts/build-halium.sh`, `scripts/repack-bootimg.sh` — **planned, not yet present on disk**), ingestion scripts (`scripts/scrape-lineage.py`, `scripts/enrich-ubports.py`, `scripts/enrich-halium.py`, `scripts/enrich-aospdtgen.py` — **planned, not yet present on disk**), the ADB probe (`scripts/probe.sh` — **planned, not yet present**; `scripts/probe-to-yaml.py` — present), the kernel config fragment (`kernel/config-fragment-standard` — **planned, not yet present**), the `Containerfile` (currently the inherited x86_64 desktop template, see P13), the initramfs (`src/initramfs/` — **planned, not yet present**), and the docs |
 | **DaemonCores-CI** | Execution | The CI workflows (`workflows/build-device.yml`, `workflows/ingest-devices.yml`) and the ARM/AMD build matrices that call the scripts in this repo |
 
 This repo does **not** contain CI workflows. The scripts are here; the workflows that invoke them
@@ -56,11 +64,74 @@ independently of the execution infrastructure.
 
 ---
 
+## 3.5 Forge vs Product — The AOSP/Pixel Separation
+
+DaemonCores-Phone is a **forge**, not a product. The separation is the same as the one between
+[AOSP](https://source.android.com/) and the Pixel phone:
+
+| | Forge | Product |
+|---|---|---|
+| **Android world** | AOSP (source) | Pixel, Samsung One UI, Xiaomi HyperOS |
+| **Mobile Linux world** | **DaemonCores-Phone** (this repo — the forge) | Future end-user distro (separate name, separate repo, separate design pass) |
+
+AOSP is the source that downstream vendors turn into end-user products. DaemonCores-Phone is
+the source that downstream projects turn into end-user mobile Linux distributions. AOSP does
+not ship a phone you can buy; it ships the build system and the system image that a product
+team turns into a phone you can buy. DaemonCores-Phone does not ship an end-user distro you
+flash and use daily; it ships the build pipeline and the base rootfs artifact that a product
+team turns into that distro.
+
+This separation is **non-negotiable** for two reasons:
+
+1. **Scope discipline** — a forge and a product have different optimization targets. A forge
+   optimizes for coverage, reproducibility, and downstream flexibility. A product optimizes
+   for a single coherent user experience. Conflating the two produces a forge that compromises
+   its build generality to appease one product's UX, and a product that is constrained by the
+   forge's build-time decisions. Keeping them separate lets each optimize for its own target.
+2. **Design freedom** — the end-user mobile Linux product ("the Android of Linux") deserves
+   its own design pass. The UI, the default app set, the onboarding flow, the branding, and
+   the commercial model are product decisions, not forge decisions. They belong to a separate
+   project with its own name, its own repository, and its own team. The forge must not bake any
+   of them into its base artifact.
+
+### What the forge ships vs what the product adds
+
+| Artifact | Owner | Notes |
+|---|---|---|
+| Build pipeline (`scripts/build-halium.sh`, ingestion scripts) | Forge | Source of truth in this repo |
+| `device.yml` descriptors + JSON Schema | Forge | The contract every device must satisfy |
+| `boot.img` (Halium-patched kernel + standard initramfs) | Forge | Build output, published to GitHub Releases |
+| **Base rootfs artifact** (Debian Trixie + bootc/OSTree, CLI boot) | Forge | **A build artifact, not the end-user product.** See §8. |
+| Waydroid integration (Layer 3) | Forge | Architectural brick baked into the base, not a product concern |
+| UI / shell / onboarding / branding | **Product** | Separate future project |
+| Default app set / app store / commercial model | **Product** | Separate future project |
+| End-user distribution name and identity | **Product** | Separate future project |
+
+### Clarification on Layer 2 (base rootfs artifact)
+
+Layer 2 of the architecture (Debian Trixie + bootc/OSTree, see §8) is a **base rootfs artifact
+produced by the forge** — it is not the end-user product. It is the equivalent of the AOSP
+system image: the substrate a downstream product layers on. A product team builds a downstream
+image `FROM` this base artifact and adds the UI, the shell, the default apps, the branding,
+and the onboarding flow. The forge guarantees the base boots to a fully-supported CLI and that
+the Halium + Waydroid substrate is correct; the product team owns everything the user sees on
+top of that CLI.
+
+This clarification matters because it reframes the CLI-first target (P13, see
+[Roadmap](../todo/ROADMAP.md)) as a **forge deliverable** (the base artifact boots to a
+supported CLI), not as a product limitation (the end-user distro is CLI-only). The end-user
+distro will not be CLI-only; it will have a proper mobile UI — but that UI is a product-layer
+concern, built on top of the forge's base artifact, not a forge-layer concern.
+
+See [`future-product.md`](future-product.md) for the end-user product vision.
+
+---
+
 ## 4. The `device.yml` Contract
 
 Every supported device is described by a single `device/<codename>/device.yml` file. This file is
 the input to the standard pipeline. It is validated against
-[`device/_schema.yml`](_schema.yml) (JSON Schema draft 2020-12) by CI — an invalid descriptor is
+[`device/_schema.yml`](../device/_schema.yml) (JSON Schema draft 2020-12) by CI — an invalid descriptor is
 rejected before any build runs.
 
 ### Required fields
@@ -155,16 +226,20 @@ The single build entry point. It takes a `device.yml` as input and performs:
 Packages the compiled kernel, the standard Halium initramfs, and the DTB into an Android
 `boot.img` compatible with the device's `partition_layout`.
 
-### Kernel strategy: zero maintenance
+### Kernel strategy: zero maintenance, per-device compilation
 
 > We prefer a kernel developed by a random contributor that applies recent security patches over
 > an old official kernel that is obsolete and has security holes.
 
-The pipeline **does not recompile a kernel per device**. A single global kernel is built per major
-version, and device support is added via an external kernel module package that plugs into the
-global block. If there is nothing to optimise or fix in the kernel output of the external
-device-support module, the pipeline does not rebuild it — it builds on an already-packaged,
-functional source.
+The pipeline **compiles a kernel per device**, because each device has a different vendor kernel
+tree and a different `defconfig`. The flow, per `device.yml`, is: clone the device-specific
+`kernel_repo`, apply the Halium hybris patches, merge `kernel/config-fragment-standard` into the
+device `defconfig`, and cross-compile for ARM64. The compiled kernel is packaged into the device's
+`boot.img`. The forge therefore compiles per device, but it **maintains no kernel**: each
+`kernel_repo` is cloned as-is from its upstream maintainer (LineageOS priority, then stock, then
+other) and never forked into this repository. The device-support surface is carried entirely by the
+upstream vendor tree plus the standard config fragment merged at build time — there is no
+forge-maintained kernel branch, no per-SoC strategy, and no special cases.
 
 LineageOS maintains vendor kernels for 100+ devices with monthly backports of the Android
 Security Bulletin (ASB). The pipeline reuses that work: the `kernel_repo` field points at the
@@ -267,10 +342,19 @@ build time, in the standard pipeline.
 
 ## 8. bootc/OSTree Base Image
 
-The rootfs is a Debian Trixie ARM64 image built with bootc/OSTree, adapted from the
+The rootfs target is a Debian Trixie ARM64 image built with bootc/OSTree, adapted from the
 [debian-bootc](https://github.com/DaemonCores/debian-bootc) base. The bootc/OSTree model is
 preserved: the entire OS is built as an OCI container image, applied atomically to the device, and
 fully rollback-capable.
+
+> **Current state (honest).** The `Containerfile` currently on disk in this repo is **not** the
+> smartphone ARM64 image. It is the **x86_64 desktop template inherited from the debian-bootc base**:
+> it installs `linux-image-amd64`, `linux-headers-amd64`, `intel-microcode`, and `amd64-microcode`
+> (Containerfile lines 61-67) and carries desktop/server packages. The ARM64 smartphone adaptation
+> is **in progress** (Roadmap P13, reverted to TODO on 2026-08-03) and depends on the debian-bootc
+> upstream advancing on ARM support. Until P13 lands, the inherited `Containerfile` is kept only
+> as a build-template reference; it is **not** the smartphone image and should not be treated as
+> the forge's rootfs deliverable.
 
 | Component | Role |
 |---|---|
@@ -317,7 +401,11 @@ CONFIG_NAMESPACES=y
 ### Distribution and maintenance
 
 Waydroid is actively maintained (4 releases between Nov 2024 and May 2025) and is available in
-official repositories of Debian 14+, Ubuntu 26.10+, Fedora, and Void Linux.
+official repositories of Fedora and Void Linux, with Debian/Ubuntu availability tracked on the
+official Waydroid documentation site (`docs.waydro.id`). Refer to `docs.waydro.id` for the current
+list of distributions that ship Waydroid in their official repositories; availability on
+Debian/Ubuntu depends on the Waydroid install instructions published there and should not be
+assumed from upstream release cadence.
 
 ### Sources
 
@@ -429,4 +517,4 @@ committed** to the repository.
 - [`docs/minimal.md`](minimal.md) — The smartphone minimal variant
 - [`device/_schema.yml`](../device/_schema.yml) — JSON Schema validating every `device.yml`
 - [`todo/ROADMAP.md`](../todo/ROADMAP.md) — Development roadmap with structural markers
-- [`Containerfile`](../Containerfile) — ARM64 Debian Trixie bootc/OSTree image definition
+- [`Containerfile`](../Containerfile) — Currently the inherited x86_64 desktop debian-bootc template; the ARM64 smartphone image is tracked by Roadmap P13 (TODO)

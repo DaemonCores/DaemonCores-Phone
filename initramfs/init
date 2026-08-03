@@ -1,0 +1,383 @@
+#!/bin/sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
+#
+# WIP — Work in progress. This initramfs init is part of the
+# DaemonCores-Phone standard Halium pipeline and is under active
+# development. The boot flow, partition detection, overlay setup, and
+# OSTree switch_root wiring are not yet validated against real devices.
+# Expect breaking changes until the pipeline reaches a tagged milestone.
+#
+# init — Standard Halium initramfs entry point.
+#
+# Description:
+#   The generic, device-agnostic early-userspace init for the
+#   DaemonCores-Phone Halium pipeline. It is the same for every device:
+#   no codename, vendor, or SoC is hardcoded here. Every device-specific
+#   fact is resolved at runtime from the kernel-provided /dev/block/by-name
+#   symlinks and the mounted Android partitions.
+#
+#   The boot flow is:
+#     1. Mount the kernel pseudo-filesystems (/proc, /sys, /dev).
+#     2. Detect the Android partitions from /dev/block/by-name/ via
+#        scripts/detect-partitions.sh.
+#     3. Mount the real Android system and vendor partitions read-only.
+#     4. Layer overlayfs on top of /system and /vendor so the Debian
+#        userspace can write transiently without touching the read-only
+#        Android partitions.
+#     5. Mount the Debian bootc/OSTree rootfs from the system partition
+#        (or the slot identified by the boot), and switch_root into it.
+#
+#   The script deliberately uses only POSIX sh + the busybox tooling
+#   available in a standard initramfs. It does not depend on systemd at
+#   this stage — systemd is the init of the real Debian rootfs, reached
+#   after switch_root.
+#
+# Globals:
+#   Reads:
+#     INITRAMFS_DEBUG   When non-empty, enables verbose set -x tracing.
+#     ROOTFS_SLOT       Optional override for the rootfs partition label
+#                       (default: "system"). Useful for A/B devices where
+#                       the rootfs lives on a different slot.
+#   Writes:
+#     Mounts /proc, /sys, /dev, /system, /vendor, the real rootfs, and
+#     switches the root into the real rootfs (this process exits).
+#
+# Arguments:
+#   None (invoked by the kernel as /init).
+#
+# Outputs:
+#   stderr: diagnostic lines prefixed with [init].
+#
+# Returns:
+#   This script never returns on success — it execs switch_root into the
+#   real rootfs. On failure it drops to a recovery shell so an operator
+#   can inspect the early-userspace state.
+#
+# Idempotence:
+#   Not relevant: init runs once per boot. Each mount step is guarded by
+#   a mount-point check so a re-exec (e.g. after a failed recovery shell
+#   retry) does not double-mount.
+
+# set -eu would abort on the first failing mount probe, which is too
+# aggressive for an init that must reach a recovery shell on partial
+# failures. We use set -u (catch unset variables) and handle each command
+# explicitly.
+set -u
+
+# ---------------------------------------------------------------------------
+# Debug toggle
+# ---------------------------------------------------------------------------
+
+if [ -n "${INITRAMFS_DEBUG:-}" ]; then
+    set -x
+fi
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+log() {
+    printf '[init] %s\n' "$*" >&2
+}
+
+err() {
+    printf '[init] ERROR: %s\n' "$*" >&2
+}
+
+# Drop to a recovery shell. Used when a critical step fails so an operator
+# can inspect the initramfs state. The shell is interactive on a serial
+# console; on a headless boot it spins waiting for input.
+recovery_shell() {
+    err "dropping to recovery shell"
+    err "  mounted filesystems:"
+    if [ -r /proc/mounts ]; then
+        sed 's/^/    /' /proc/mounts >&2 2>/dev/null || true
+    fi
+    if command -v setsid >/dev/null 2>&1; then
+        setsid sh -c 'exec sh' </dev/console >/dev/console 2>&1
+    else
+        exec sh </dev/console >/dev/console 2>&1
+    fi
+}
+
+# Mount a pseudo-filesystem if not already mounted.
+mount_pseudo() {
+    # $1 = fs type, $2 = mount point.
+    fstype="$1"
+    mnt="$2"
+    mkdir -p "$mnt" 2>/dev/null || true
+    if [ -r /proc/mounts ] && awk -v m="$mnt" '$2 == m {found=1} END {exit found ? 0 : 1}' /proc/mounts 2>/dev/null; then
+        log "$mnt already mounted"
+        return 0
+    fi
+    if mount -t "$fstype" "$fstype" "$mnt" 2>/dev/null; then
+        log "mounted $mnt (type $fstype)"
+        return 0
+    fi
+    err "failed to mount $mnt (type $fstype)"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Step 1 — Mount the kernel pseudo-filesystems.
+# ---------------------------------------------------------------------------
+
+log "DaemonCores-Phone standard Halium initramfs"
+
+mount_pseudo proc /proc || recovery_shell
+mount_pseudo sysfs /sys || recovery_shell
+
+# /dev: prefer devtmpfs (auto-populated by the kernel), fall back to a
+# static tmpfs + mdev coldplug. devtmpfs is the norm on vendor kernels
+# built for Android; the fallback covers very old kernels.
+#
+# NOTE: mount_pseudo() takes exactly two args (fs type, mount point).
+# Earlier code passed three (devtmpfs devtmpfs /dev), which made mnt
+# "devtmpfs" and tried to mkdir/mount the wrong path. Fixed to the
+# 2-arg form: mount_pseudo devtmpfs /dev.
+if ! mount_pseudo devtmpfs /dev 2>/dev/null && ! mount -t devtmpfs devtmpfs /dev 2>/dev/null; then
+    mount_pseudo tmpfs /dev || recovery_shell
+    # Coldplug: copy the static /devices nodes if present, or rely on mdev.
+    if command -v mdev >/dev/null 2>&1; then
+        mdev -s 2>/dev/null || true
+    fi
+fi
+
+# /dev/block is expected by the by-name symlinks. Some kernels create it
+# automatically under devtmpfs; ensure it exists for the detection script.
+mkdir -p /dev/block 2>/dev/null || true
+
+# /run and /tmp: tmpfs, transient. Needed by overlayfs work dirs and by
+# the switch_root staging.
+mount_pseudo tmpfs /run 2>/dev/null || true
+mount_pseudo tmpfs /tmp 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Step 2 — Detect Android partitions from /dev/block/by-name/.
+# ---------------------------------------------------------------------------
+
+# Source the helper scripts. They live alongside /init in the initramfs.
+SCRIPTS_DIR="/scripts"
+if [ ! -d "$SCRIPTS_DIR" ]; then
+    err "scripts directory missing: $SCRIPTS_DIR"
+    recovery_shell
+fi
+
+# detect-partitions.sh prints "KEY=value" lines on stdout; capture and
+# eval them so the SYS_* variables are available in this process.
+log "detecting Android partitions"
+PART_ENV=""
+if PART_ENV=$(sh "$SCRIPTS_DIR/detect-partitions.sh" 2>/dev/null); then
+    # eval the exported assignments. The script guarantees shell-safe
+    # KEY=value lines.
+    eval "$PART_ENV"
+    log "partition detection complete"
+else
+    rc=$?
+    err "partition detection failed (exit $rc)"
+    recovery_shell
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3 — Mount the real Android system and vendor partitions read-only.
+# ---------------------------------------------------------------------------
+
+# The system and vendor partitions are the lower layers for the overlay.
+# They are mounted read-only under /mnt so the overlay can use them as
+# lowerdir without exposing them directly to the final userspace.
+
+mount_partition_ro() {
+    # $1 = device path, $2 = mount point, $3 = label (for logging).
+    dev="$1"
+    mnt="$2"
+    label="$3"
+    if [ -z "$dev" ] || [ ! -e "$dev" ]; then
+        log "partition '$label' not present (dev=$dev) — skipping"
+        return 0
+    fi
+    mkdir -p "$mnt" 2>/dev/null || true
+    if [ -r /proc/mounts ] && awk -v m="$mnt" '$2 == m {found=1} END {exit found ? 0 : 1}' /proc/mounts 2>/dev/null; then
+        log "$label already mounted at $mnt"
+        return 0
+    fi
+    # Try ext4 first (the dominant Android partition format), then fall
+    # back to auto-detection. The mount is read-only.
+    if mount -t ext4 -o ro "$dev" "$mnt" 2>/dev/null \
+        || mount -o ro "$dev" "$mnt" 2>/dev/null; then
+        log "mounted $label read-only: $dev -> $mnt"
+        return 0
+    fi
+    err "failed to mount $label read-only: $dev"
+    return 1
+}
+
+mount_partition_ro "${SYS_SYSTEM:-}"   /mnt/system   "system"
+mount_partition_ro "${SYS_VENDOR:-}"   /mnt/vendor   "vendor"
+
+# ---------------------------------------------------------------------------
+# Step 4 — Layer overlayfs on top of /system and /vendor.
+# ---------------------------------------------------------------------------
+
+# The overlays make /system and /vendor writable from the Debian userspace's
+# point of view while keeping the real Android partitions read-only. Writes
+# land in tmpfs and vanish on reboot.
+
+mkdir -p /system 2>/dev/null || true
+mkdir -p /vendor 2>/dev/null || true
+
+if [ -d /mnt/system ]; then
+    log "setting up overlay for /system"
+    sh "$SCRIPTS_DIR/overlay-mount.sh" /mnt/system /system 2>&2 || \
+        err "overlay for /system failed — /system may be unavailable or read-only"
+else
+    err "/mnt/system not mounted — /system will be empty"
+fi
+
+if [ -d /mnt/vendor ]; then
+    log "setting up overlay for /vendor"
+    sh "$SCRIPTS_DIR/overlay-mount.sh" /mnt/vendor /vendor 2>&2 || \
+        err "overlay for /vendor failed — /vendor may be unavailable or read-only"
+else
+    err "/mnt/vendor not mounted — /vendor will be empty"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 5 — Locate and mount the Debian bootc/OSTree rootfs.
+# ---------------------------------------------------------------------------
+
+# The Debian rootfs is applied atomically by bootc/OSTree. On a Halium
+# device the rootfs lives on the Android system partition (or an A/B slot
+# variant). The default slot label is "system"; ROOTFS_SLOT can override
+# it for devices that store the rootfs on a different partition.
+ROOTFS_SLOT_LABEL="${ROOTFS_SLOT:-system}"
+
+# Resolve the rootfs device from the already-detected partitions. When the
+# slot is "system" we reuse SYS_SYSTEM; otherwise we look it up again.
+ROOTFS_DEV=""
+case "$ROOTFS_SLOT_LABEL" in
+    system)
+        ROOTFS_DEV="${SYS_SYSTEM:-}"
+        ;;
+    *)
+        # Re-scan the by-name directory for the requested slot label.
+        if [ -n "${PARTITION_BY_NAME_DIR:-}" ] && [ -e "$PARTITION_BY_NAME_DIR/$ROOTFS_SLOT_LABEL" ]; then
+            ROOTFS_DEV="$PARTITION_BY_NAME_DIR/$ROOTFS_SLOT_LABEL"
+            # Resolve the by-name symlink to its real block device.
+            # `readlink -f` is a GNU/busybox extension, not POSIX. We
+            # use a portable cd-based resolver that follows one symlink
+            # level (by-name entries are always single-level symlinks to
+            # /dev/block/<node>). Falls back to the literal path.
+            if command -v readlink >/dev/null 2>&1; then
+                # readlink without -f is POSIX-adjacent and prints the
+                # immediate symlink target; we resolve the directory of
+                # that target via cd to get an absolute path.
+                link_target=$(readlink "$ROOTFS_DEV" 2>/dev/null) || link_target=""
+                if [ -n "$link_target" ]; then
+                    case "$link_target" in
+                        /*) ROOTFS_DEV="$link_target" ;;
+                        *)
+                            # Relative target: resolve against the
+                            # symlink's directory.
+                            link_dir=$(dirname "$ROOTFS_DEV")
+                            ROOTFS_DEV=$( ( cd "$link_dir/$link_target" 2>/dev/null && pwd ) \
+                                || printf '%s/%s' "$link_dir" "$link_target" )
+                            ;;
+                    esac
+                fi
+            fi
+        fi
+        ;;
+esac
+
+if [ -z "$ROOTFS_DEV" ]; then
+    err "rootfs partition '$ROOTFS_SLOT_LABEL' not found — cannot switch_root"
+    recovery_shell
+fi
+
+log "rootfs device: $ROOTFS_DEV (slot=$ROOTFS_SLOT_LABEL)"
+
+# Mount the Debian rootfs. bootc/OSTree deploys live in /ostree/deploy/<repo>/deploy/<commit>/.
+# The rootfs partition is mounted under /mnt/rootfs and the switch_root
+# target is the ostree deployment directory if present, otherwise the
+# partition root.
+mkdir -p /mnt/rootfs 2>/dev/null || true
+if [ -r /proc/mounts ] && awk -v m=/mnt/rootfs '$2 == m {found=1} END {exit found ? 0 : 1}' /proc/mounts 2>/dev/null; then
+    log "/mnt/rootfs already mounted"
+else
+    # Try ext4 then auto.
+    if mount -t ext4 -o ro "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null \
+        || mount -o ro "$ROOTFS_DEV" /mnt/rootfs 2>/dev/null; then
+        log "mounted rootfs read-only: $ROOTFS_DEV -> /mnt/rootfs"
+    else
+        err "failed to mount rootfs: $ROOTFS_DEV"
+        recovery_shell
+    fi
+fi
+
+# Locate the OSTree deployment directory. When present, switch_root into
+# it; otherwise switch_root into the partition root.
+SWITCH_TARGET="/mnt/rootfs"
+if [ -d /mnt/rootfs/ostree/deploy ]; then
+    # Find the most recent deployment directory. The structure is
+    # /ostree/deploy/<repo>/deploy/<commit-hash>. Use the first match; a
+    # real bootc/OSTree deployment exposes exactly one current deployment.
+    DEPLOY=$(ls -d /mnt/rootfs/ostree/deploy/*/deploy/* 2>/dev/null | head -n 1)
+    if [ -n "$DEPLOY" ] && [ -d "$DEPLOY" ]; then
+        SWITCH_TARGET="$DEPLOY"
+        log "OSTree deployment found: $SWITCH_TARGET"
+    else
+        log "no OSTree deployment directory found — switching to partition root"
+    fi
+else
+    log "no /ostree/deploy — switching to partition root"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 6 — Move pseudo-filesystems and switch_root into the real rootfs.
+# ---------------------------------------------------------------------------
+
+# Move /proc, /sys, /dev, /run, /tmp into the target so the real init
+# (systemd) inherits them. switch_root handles the root change; the
+# pseudo-fs moves must happen first so the new init is not left without
+# /proc etc.
+for mnt in /proc /sys /dev /run /tmp; do
+    if [ -r /proc/mounts ] && awk -v m="$mnt" '$2 == m {found=1} END {exit found ? 0 : 1}' /proc/mounts 2>/dev/null; then
+        mount --move "$mnt" "$SWITCH_TARGET$mnt" 2>/dev/null || \
+            log "could not move $mnt into $SWITCH_TARGET (continuing)"
+    fi
+done
+
+# Ensure the target has an init binary. systemd is expected; fall back to
+# /bin/sh if the deployment is minimal.
+INIT_BIN="$SWITCH_TARGET/sbin/init"
+if [ ! -x "$INIT_BIN" ]; then
+    INIT_BIN="$SWITCH_TARGET/init"
+fi
+if [ ! -x "$INIT_BIN" ]; then
+    INIT_BIN="$SWITCH_TARGET/bin/sh"
+fi
+if [ ! -x "$INIT_BIN" ]; then
+    err "no init found under $SWITCH_TARGET (tried /sbin/init, /init, /bin/sh)"
+    recovery_shell
+fi
+
+log "switching root to $SWITCH_TARGET with init ${INIT_BIN#$SWITCH_TARGET}"
+
+# switch_root expects: the new root is a mount point, the old root is
+# deleted (it cleans up the initramfs). The busybox switch_root is the
+# standard tool; fall back to a manual pivot_root if switch_root is absent.
+if command -v switch_root >/dev/null 2>&1; then
+    exec switch_root "$SWITCH_TARGET" "$INIT_BIN"
+else
+    cd "$SWITCH_TARGET" || recovery_shell
+    if pivot_root . "${SWITCH_TARGET}_old" 2>/dev/null; then
+        exec "${INIT_BIN#$SWITCH_TARGET}"
+    fi
+    err "pivot_root failed and switch_root absent — cannot switch_root"
+    recovery_shell
+fi
+
+# Unreachable on success.
+err "switch_root returned unexpectedly"
+recovery_shell
+exit 1
