@@ -55,7 +55,7 @@ per-device kernel work, per-SoC strategy, or a special case is rejected.
 
 | Repository | Role | Contents |
 |---|---|---|
-| **DaemonCores-Phone** (this repo) | Source of truth | `device.yml` descriptors, build scripts (`scripts/build-halium.sh`, `scripts/repack-bootimg.sh` — **planned, not yet present on disk**), ingestion scripts (`scripts/scrape-lineage.py`, `scripts/enrich-ubports.py`, `scripts/enrich-halium.py`, `scripts/enrich-aospdtgen.py` — **planned, not yet present on disk**), the ADB probe (`scripts/probe.sh` — **planned, not yet present**; `scripts/probe-to-yaml.py` — present), the kernel config fragment (`kernel/config-fragment-standard` — **planned, not yet present**), the `Containerfile` (currently the inherited x86_64 desktop template, see P13), the initramfs (`src/initramfs/` — **planned, not yet present**), and the docs |
+| **DaemonCores-Phone** (this repo) | Source of truth | `device.yml` descriptors, build scripts (`scripts/build-halium.sh`, `scripts/repack-bootimg.sh`), ingestion scripts (`scripts/scrape-lineage.py`, `scripts/enrich-ubports.py`, `scripts/enrich-halium.py`, `scripts/enrich-aospdtgen.py` — **planned, not yet present on disk**), the ADB probe (`scripts/probe.sh`; `scripts/probe-to-yaml.py` — present), the kernel config fragment (`kernel/config-fragment-standard`), the `Containerfile` (the DaemonCores Phone Containerfile, multi-arch amd64/arm64; see P13), the initramfs (`initramfs/`), and the docs |
 | **DaemonCores-CI** | Execution | The CI workflows (`workflows/build-device.yml`, `workflows/ingest-devices.yml`) and the ARM/AMD build matrices that call the scripts in this repo |
 
 This repo does **not** contain CI workflows. The scripts are here; the workflows that invoke them
@@ -304,7 +304,7 @@ initramfs that mounts the Debian bootc/OSTree rootfs:
                ▼
 ┌─────────────────────────────┐
 │  Halium initramfs           │
-│  (src/initramfs/)           │
+│  (initramfs/)               │
 │  - Linux init               │
 │  - overlayfs mount scripts  │
 │  - Auto-detection at boot:  │
@@ -320,7 +320,7 @@ initramfs that mounts the Debian bootc/OSTree rootfs:
 └─────────────────────────────┘
 ```
 
-### Standard Halium initramfs (`src/initramfs/`)
+### Standard Halium initramfs (`initramfs/`)
 
 The initramfs is **the same for all devices**. It performs the Halium standard early boot:
 
@@ -347,14 +347,16 @@ The rootfs target is a Debian Trixie ARM64 image built with bootc/OSTree, adapte
 preserved: the entire OS is built as an OCI container image, applied atomically to the device, and
 fully rollback-capable.
 
-> **Current state (honest).** The `Containerfile` currently on disk in this repo is **not** the
-> smartphone ARM64 image. It is the **x86_64 desktop template inherited from the debian-bootc base**:
-> it installs `linux-image-amd64`, `linux-headers-amd64`, `intel-microcode`, and `amd64-microcode`
-> (Containerfile lines 61-67) and carries desktop/server packages. The ARM64 smartphone adaptation
-> is **in progress** (Roadmap P13, reverted to TODO on 2026-08-03) and depends on the debian-bootc
-> upstream advancing on ARM support. Until P13 lands, the inherited `Containerfile` is kept only
-> as a build-template reference; it is **not** the smartphone image and should not be treated as
-> the forge's rootfs deliverable.
+> **Current state (honest).** The `Containerfile` at the repo root is now a proper DaemonCores Phone
+> multi-arch bootc/ostree image — `FROM ghcr.io/daemoncores/debian-bootc:latest`, labelled
+> `org.opencontainers.image.title="DaemonCores Phone"` — no longer the inherited x86_64 desktop
+> template. It builds natively on x86_64 (`ARCH=amd64` default) and ARM64 (CI `--build-arg
+> ARCH=arm64`) via a single `linux-image-${KERNEL_VARIANT}-${ARCH}` install line, with optional
+> per-device module overlays (rpi3/rpi4/rpi5/rk3588). It is **ultra-minimal**: no SSH, no man
+> pages, no logging persistence, single tty1 console — the smartphone UI remains a separate
+> Phase 2 (Roadmap P15). What the Containerfile does **not** yet provide is the bootable smartphone
+> kernel: the Halium-patched kernel packaged in a `boot.img` with the Halium initramfs is still
+> tracked by Roadmap P13 (TODO as of 2026-08-03) and is built upstream, outside this Containerfile.
 
 | Component | Role |
 |---|---|
@@ -517,4 +519,4 @@ committed** to the repository.
 - [`docs/minimal.md`](minimal.md) — The smartphone minimal variant
 - [`device/_schema.yml`](../device/_schema.yml) — JSON Schema validating every `device.yml`
 - [`todo/ROADMAP.md`](../todo/ROADMAP.md) — Development roadmap with structural markers
-- [`Containerfile`](../Containerfile) — Currently the inherited x86_64 desktop debian-bootc template; the ARM64 smartphone image is tracked by Roadmap P13 (TODO)
+- [`Containerfile`](../Containerfile) — Multi-arch (x86_64 + ARM64) DaemonCores Phone bootc/ostree image (FROM ghcr.io/daemoncores/debian-bootc:latest); the bootable Halium kernel (boot.img) is tracked by Roadmap P13 (TODO)
