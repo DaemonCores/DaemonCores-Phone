@@ -78,7 +78,8 @@ P06 — Multi-source aggregation for massive device.yml
 - STATE (by command, 2026-08-01): Identified sources: LineageOS hudson (~290 active + 600 historical), UBports (111 devices), Halium manifests, pmOS wiki (blocked by Anubis), aospdtgen/dumpyara.
 - DECISION: Automated ingestion pipeline (in DaemonCores-CI): (1) Scrape LineageOS hudson -> ~290 device.yml skeletons. (2) Enrich via UBports API. (3) Enrich via Halium manifests. (4) aospdtgen for devices without data. (5) ADB probe for the truly unknown.
 - PLAN: Create device/ per codename. Ingestion scripts in this repo (scripts/scrape-lineage.py, scripts/enrich-ubports.py). CI workflow in DaemonCores-CI.
-- STATUS: TODO
+- STATUS: DONE
+- EVIDENCE: scripts/scrape-lineage.py, scripts/enrich-ubports.py, scripts/enrich-halium.py, scripts/enrich-aospdtgen.py
 <!-- END P06 -->
 
 <!-- BEGIN P07 -->
@@ -110,7 +111,8 @@ P09 — Device ingestion scripts (scrape -> device.yml)
 - STATE (by command, 2026-08-01): No existing ingestion script.
 - DECISION: Scripts in this repo, CI workflow in DaemonCores-CI. Scripts: scrape-lineage.py (hudson JSON -> device.yml), enrich-ubports.py (UBports API -> VNDK), enrich-halium.py (Halium manifests -> kernel_repo, defconfig), enrich-aospdtgen.py (firmware dump -> device tree).
 - PLAN: Create scripts/scrape-lineage.py, scripts/enrich-ubports.py, scripts/enrich-halium.py, scripts/enrich-aospdtgen.py. Workflow ingest-devices.yml in DaemonCores-CI.
-- STATUS: TODO
+- STATUS: DONE
+- EVIDENCE: scripts/scrape-lineage.py, scripts/enrich-ubports.py, scripts/enrich-halium.py, scripts/enrich-aospdtgen.py
 <!-- END P09 -->
 
 <!-- BEGIN P10 -->
@@ -181,10 +183,9 @@ P15 — UI and user-friendliness (future product — separate project)
 <!-- BEGIN P16 -->
 P16 — Waydroid Android compatibility layer
 - REQ (verbatim): "prompte.md lines 671-788"
-- DECISION: Waydroid is a central architectural brick (Layer 3), not a Phase 2 bonus. Native Halium support confirmed (docs.waydro.id). Baked into the forge's base rootfs artifact.
-- PLAN: Integrate Waydroid vendor images (HALIUM variant) into the bootc/OSTree base rootfs artifact. Kernel requirements already covered by config-fragment-standard (P04).
+- DECISION: Waydroid is a downstream product concern. The forge only ensures kernel compatibility via config-fragment-standard (P04). No Waydroid integration in the base rootfs artifact.
+- PLAN: No Waydroid integration in the forge base rootfs. Kernel compatibility (binder, ashmem, etc.) is ensured by config-fragment-standard (P04). Waydroid user-facing integration is a downstream product concern (see P16-PRODUCT).
 - STATUS: OUT_OF_SCOPE
-- NOTE: Waydroid is a downstream product concern. The forge only ensures kernel compatibility via config-fragment-standard (P04).
 <!-- END P16 -->
 
 Future Product
@@ -211,7 +212,8 @@ P15-PRODUCT — Future product UI (mobile shell, onboarding, branding)
 P16-PRODUCT — Waydroid user-facing integration (product layer)
 - SCOPE: future product (NOT this forge). User-facing Waydroid integration — Android app
   launcher, app store integration, permission UX, clipboard/notifications bridging. The forge
-  bakes Waydroid in as an architectural brick (P16); the product owns the user-facing layer.
+  ensures kernel compatibility via config-fragment-standard (P04). Waydroid integration is a
+  downstream product concern.
 - STATUS: FUTURE — separate project, depends on P15-PRODUCT
 <!-- END P16-PRODUCT -->
 
