@@ -115,9 +115,9 @@ P10 — Script build Halium standard
 P11 — Integration Halium: boot.img + initramfs standard
 - REQ (verbatim): "Le kernel. Il doit etre compile avec les patchs Halium, avec le bon defconfig, et empaquete dans un boot.img avec l'initramfs Halium."
 - DECISION: Initramfs Halium standard (le meme pour tous les devices). Contient: init Linux, scripts de montage overlayfs, detection auto au boot (droid-card, partitions).
-- PLAN: Creer src/initramfs/ (initramfs Halium standard). Creer scripts/repack-bootimg.sh.
+- PLAN: Creer initramfs/ (initramfs Halium standard). Creer scripts/repack-bootimg.sh.
 - STATUS: DONE
-- EVIDENCE: src/initramfs/init, src/initramfs/scripts, scripts/repack-bootimg.sh
+- EVIDENCE: initramfs/init, initramfs/scripts, scripts/repack-bootimg.sh
 <!-- END P11 -->
 
 <!-- BEGIN P12 -->
