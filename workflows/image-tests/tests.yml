@@ -11,6 +11,8 @@
 #                  refuses to run (fails the build) if any test lacks a diag,
 #                  so a failure can never be undiagnosable.
 
+# Clean and complete file
+
 boot_timeout: 600
 
 tests:

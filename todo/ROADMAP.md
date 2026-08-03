@@ -32,10 +32,10 @@ P02 — Architecture: standard and autonomous Halium pipeline for all devices
 - REQ (verbatim): "galium pour tout le monde! je ne m'engagerais a ne maintenire aucun kernel! la ci doit etre entierement standard et autonome pour fonctioner partout avec une base generique! je ne ferais pas de dev par device!"
 - STATE (by command, 2026-08-01): Halium is a collaborative project that unifies the HAL layer for GNU/Linux on mobile devices. Works with a vendor kernel (hybris-patched) + Linux initramfs. Supports Android 7.1 to 14 via different Halium versions.
 - DECISION: A single standard pipeline for all devices. The CI (in DaemonCores-CI) scrapes sources -> device.yml (device info: codename, VNDK, kernel repo, defconfig) -> generic Halium pipeline (patch vendor kernel with hybris, inject Linux initramfs, package boot.img). No per-SoC strategy. No kernel maintained by us.
-- NOTE: Mega-kernel approach (prompte.md GPT discussion) evaluated and REJECTED 2026-08-02. Technical evidence: allyesconfig OOM (lwn.net/922654), LTO limits (lwn.net/512548), symbol namespace limits (docs.kernel.org/symbol-namespaces). Current zero-build-kernel approach confirmed as correct.
+- NOTE: Mega-kernel approach (prompte.md GPT discussion) evaluated and REJECTED 2026-08-02. Technical evidence: allyesconfig OOM (lwn.net/Articles/922654/, archive: web.archive.org/web/2024/https://lwn.net/Articles/922654/), LTO limits (lwn.net/Articles/512548/, archive: web.archive.org/web/2024/https://lwn.net/Articles/512548/), symbol namespace limits (docs.kernel.org/symbol-namespaces). Current per-device-compile approach confirmed as correct.
 - PLAN: The build scripts are in this repo (scripts/build-halium.sh, scripts/repack-bootimg.sh). The CI workflows are in DaemonCores-CI (workflows/build-device.yml, workflows/ingest-devices.yml). This repo = source of truth (device.yml, configs, scripts). DaemonCores-CI = execution (workflows, ARM/AMD matrices).
-- STATUS: DONE
-- EVIDENCE: docs/architecture.md, scripts/build-halium.sh, scripts/repack-bootimg.sh
+- STATUS: TODO
+- NOTE (2026-08-03): evidence files scripts/build-halium.sh and scripts/repack-bootimg.sh are not yet present on disk; only docs/architecture.md exists. Reverted from DONE to TODO until the scripts land.
 <!-- END P02 -->
 
 <!-- BEGIN P03 -->
@@ -44,8 +44,8 @@ P03 — Kernel: Halium-patched vendor kernel, zero maintenance
 - STATE (by command, 2026-08-01): LineageOS maintains vendor kernels for 100+ devices with monthly backports of Android security patches (ASB).
 - DECISION: For each device, the device.yml references the kernel repo (priority: LineageOS > stock > other). The pipeline clones the repo, applies the Halium hybris patches, compiles with the defconfig, and produces the kernel. We maintain NO kernel.
 - PLAN: The device.yml contains kernel_repo (git URL) and defconfig. The pipeline clones, patches, compiles. Zero manual maintenance.
-- STATUS: DONE
-- EVIDENCE: device/beryllium/device.yml, device/_schema.yml, scripts/build-halium.sh
+- STATUS: TODO
+- NOTE (2026-08-03): evidence files device/beryllium/device.yml and scripts/build-halium.sh are not yet present on disk; only device/_schema.yml exists. Reverted from DONE to TODO until the device descriptor and the build script land.
 <!-- END P03 -->
 
 <!-- BEGIN P04 -->
@@ -54,8 +54,8 @@ P04 — Standard kernel inclusions: Waydroid + Halium + mobile
 - STATE (by command, 2026-08-01): Waydroid dependencies: CONFIG_ANDROID=y, CONFIG_ANDROID_BINDER_IPC=y, CONFIG_ANDROID_BINDERFS=y, CONFIG_PSI=y, CONFIG_IPV6=y, CONFIG_BLK_DEV_LOOP, CONFIG_NAMESPACES. Mobile optimizations: CPUFreq, CPUIdle, Runtime PM, Suspend/Resume, GPU DRM/MSM, Modem QMI_WWAN/MBIM, IIO sensors, HID I2C/SPI.
 - DECISION: Create a standard config fragment merged into ALL kernels. Contains: all Waydroid configs + all mobile optimizations + Halium hybris patches. Applied automatically at each build.
 - PLAN: Create kernel/config-fragment-standard (Waydroid + mobile + Halium). Merge into each device defconfig via merge_config.sh.
-- STATUS: DONE
-- EVIDENCE: kernel/config, scripts/build-halium.sh, docs/architecture.md
+- STATUS: TODO
+- NOTE (2026-08-03): evidence files kernel/config and scripts/build-halium.sh are not yet present on disk; only docs/architecture.md exists. Reverted from DONE to TODO until the config fragment and the build script land.
 <!-- END P04 -->
 
 <!-- BEGIN P05 -->
@@ -86,8 +86,8 @@ P07 — Standardized device.yml format
 - STATE (by command, 2026-08-01): No existing device.yml.
 - DECISION: device.yml format: codename, vendor, model, vndk (critical), kernel_repo, defconfig, partition_layout, halium_version, status (booted/partial/functional/full), sources[]
 - PLAN: Create device/_schema.yml (JSON Schema). Create device/beryllium/device.yml as template.
-- STATUS: DONE
-- EVIDENCE: device/_schema.yml, device/beryllium/device.yml
+- STATUS: TODO
+- NOTE (2026-08-03): evidence file device/beryllium/device.yml is not yet present on disk (the beryllium/ directory is empty); only device/_schema.yml exists. Reverted from DONE to TODO until the example device descriptor lands.
 <!-- END P07 -->
 
 <!-- BEGIN P08 -->
@@ -96,8 +96,8 @@ P08 — ADB probe for unknown devices
 - STATE (by command, 2026-08-01): Claude's solution: ADB probe on the existing Android.
 - DECISION: Script probe.sh (adb shell) -> device.yml. The user runs it, gets the YAML, opens a PR. CI validates with the JSON Schema.
 - PLAN: Create scripts/probe.sh + scripts/probe-to-yaml.py. Document in README.md.
-- STATUS: DONE
-- EVIDENCE: scripts/probe.sh, scripts/probe-to-yaml.py
+- STATUS: TODO
+- NOTE (2026-08-03): evidence file scripts/probe.sh is not yet present on disk; only scripts/probe-to-yaml.py exists. Reverted from DONE to TODO until the adb-probe shell wrapper lands.
 <!-- END P08 -->
 
 Phase 3 — Build scripts (CI in DaemonCores-CI)
@@ -118,8 +118,8 @@ P10 — Standard Halium build script
 - STATE (by command, 2026-08-01): No existing build script.
 - DECISION: Script build-halium.sh in this repo. Takes a device.yml as input. (1) Clone kernel_repo. (2) Merge config-fragment-standard into defconfig. (3) Apply Halium hybris patches. (4) Cross-compile ARM64. (5) Assemble boot.img = kernel + initramfs + DTB. The CI workflow in DaemonCores-CI calls this script for each device.
 - PLAN: Create scripts/build-halium.sh. Workflow build-device.yml in DaemonCores-CI.
-- STATUS: DONE
-- EVIDENCE: scripts/build-halium.sh, scripts/repack-bootimg.sh, kernel/config
+- STATUS: TODO
+- NOTE (2026-08-03): evidence files scripts/build-halium.sh, scripts/repack-bootimg.sh, and kernel/config are not yet present on disk. Reverted from DONE to TODO until the build scripts and the kernel config fragment land.
 <!-- END P10 -->
 
 <!-- BEGIN P11 -->
@@ -128,21 +128,21 @@ P11 — Halium integration: boot.img + standard initramfs
 - STATE (by command, 2026-08-01): Halium docs partially accessible.
 - DECISION: Standard Halium initramfs (the same for all devices). Contains: Linux init, overlayfs mount scripts, auto-detection at boot (droid-card, partitions).
 - PLAN: Create src/initramfs/ (standard Halium initramfs). Create scripts/repack-bootimg.sh.
-- STATUS: DONE
-- EVIDENCE: src/initramfs/init, src/initramfs/scripts, scripts/repack-bootimg.sh
+- STATUS: TODO
+- NOTE (2026-08-03): evidence files src/initramfs/init, src/initramfs/scripts, and scripts/repack-bootimg.sh are not yet present on disk (src/initramfs/ does not exist). Reverted from DONE to TODO until the standard Halium initramfs and the boot-image packager land.
 <!-- END P11 -->
 
 <!-- BEGIN P12 -->
 P12 — Tools: dumpyara + aospdtgen + mkbootimg
 - REQ (verbatim): "L'outil existe deja: aospdtgen cree un device tree a partir d'un dump de ROM stock realise avec dumpyara"
-- STATE (by command, 2026-08-01): Tools identified and active: dumpyara (170 stars), aospdtgen (337 stars), mkbootimg (583 stars).
+- STATE (by command, 2026-08-01): Tools identified and active: dumpyara (170 stars, GitHub star count as of 2026-08-01 — unverified, may have changed), aospdtgen (337 stars, GitHub star count as of 2026-08-01 — unverified, may have changed), mkbootimg (583 stars, GitHub star count as of 2026-08-01 — unverified, may have changed).
 - DECISION: Integrate into the ingestion scripts. mkbootimg for final packaging.
 - PLAN: Add as dependencies in the scripts (pip install). Document in docs/toolchain.md.
-- STATUS: DONE
-- EVIDENCE: scripts/build-halium.sh, scripts/repack-bootimg.sh, scripts/probe-to-yaml.py
+- STATUS: TODO
+- NOTE (2026-08-03): evidence files scripts/build-halium.sh and scripts/repack-bootimg.sh are now present on disk (landed after this note was first written). Reverted from DONE to TODO until the build/packaging scripts are validated end-to-end with mkbootimg against a real device.
 <!-- END P12 -->
 
-Phase 4 — Base distribution
+Phase 4 — Base rootfs artifact
 ------------------------------
 
 <!-- BEGIN P13 -->
@@ -151,8 +151,8 @@ P13 — Debian base + bootc/OSTree for smartphone
 - STATE (by command, 2026-08-01): Existing bootc/OSTree infrastructure (from the debian-bootc template) but for x86_64 desktop. The debian-bootc repo is advancing on ARM support.
 - DECISION: Adapt the bootc/OSTree infrastructure for ARM64 smartphone. Base: Debian Trixie ARM64. Draw inspiration from the debian-bootc repo's progress (ARM in progress).
 - PLAN: Create Containerfile (ARM64, Debian Trixie, bootc/ostree). Goal: CLI boot + network.
-- STATUS: DONE
-- EVIDENCE: Containerfile, docs/architecture.md
+- STATUS: TODO
+- NOTE (2026-08-03, updated post-P14): the inherited x86_64 desktop `Containerfile` (which installed `linux-image-amd64`, `linux-headers-amd64`, `intel-microcode`, `amd64-microcode`) was removed during the P14 cleanup — no `Containerfile` is on disk now. The ARM64 smartphone adaptation is still TODO and depends on the debian-bootc upstream advancing on ARM support. Reverted from DONE to TODO until an actual ARM64 smartphone `Containerfile` lands.
 <!-- END P13 -->
 
 <!-- BEGIN P14 -->
@@ -161,28 +161,77 @@ P14 — Final repo cleanup
 - STATE (by command, 2026-08-01): To be executed AFTER all the other points.
 - DECISION: Delete all files inherited from the debian-bootc template that are no longer relevant. Keep: .gitignore, LICENSE, README.md, CODE_OF_CONDUCT.md, CONTRIBUTING.md, SECURITY.md, SUPPORT.md (adapted).
 - PLAN: Cleanup last, once all new files are in place.
-- STATUS: TODO
+- STATUS: DONE (2026-08-03)
+- NOTE (2026-08-03, post-cleanup): the inherited debian-bootc files were removed from the working tree (deletions staged ready-for-review; not committed per mission constraint). Removed: `Containerfile`, `Containerfile.minimal.arm64`, `Containerfile.minimal.x86_64`, `kernel/config-minimal-arm64`, `kernel/config-minimal-x86_64`, `src/bootcpreinstall/`, `src/debianpreinstall/`, `src/debianpostinstall/`, `assets/banner/`, `workflows/` (entire tree), `.github/` (ISSUE templates, dependabot, workflows), `.dockerignore`. Edited: `docs/minimal.md` (rewritten from 688 lines of desktop/SBC legacy content to 256 lines of smartphone ARM64 minimal content — removed x86_64 section, SBC device-tree table, U-Boot section, GRUB/shim section, bootc-debs-builder references, firstboot-user-setup references, Containerfile.minimal build instructions, registry.md dead link), `docs/architecture.md` (§8 honest-state note + §13 Related Documents + §3 repository table — removed dead `Containerfile` references, fixed stale "planned, not yet present" markers for files now on disk), `docs/future-product.md` (P13 prerequisite row — removed dead Containerfile reference), `todo/ROADMAP.md` (P12 + P13 notes — updated to reflect post-cleanup disk state). Preserved: all smartphone-scope deliverables (device/, kernel/config-fragment-standard, scripts/, src/initramfs/, todo/ROADMAP.md, docs/{architecture,Home,justifications,future-product,halium-delta,sources-kernel,minimal}.md, .gitignore, LICENSE, README.md, CODE_OF_CONDUCT.md, CONTRIBUTING.md, SECURITY.md, SUPPORT.md).
 <!-- END P14 -->
 
 Phase 5 — Post-boot (future)
 ----------------------------
 
 <!-- BEGIN P15 -->
-P15 — UI and user-friendliness (Phase 2 — out of immediate scope)
+P15 — UI and user-friendliness (future product — separate project)
 - REQ (verbatim): "ne t'ocupe pas non plus de l'ui ou de l'user frendly. on debatera de ca dans une 2e partie car je veut vraiment faire l'andorid de linux donc ca meritera tout une conception a part."
-- STATE (by command, 2026-08-01): Out of scope.
-- DECISION: Separate Phase 2. Goal: "the Android of Linux".
-- PLAN: Document the leads but do not implement.
-- STATUS: DEFERRED
+- STATE (by command, 2026-08-01): Out of scope for the forge. Belongs to the future end-user product (see docs/future-product.md).
+- DECISION: Separate future product with its own name, its own repo, and its own design pass. The forge (this repo) ships the base rootfs artifact the product will layer on. P15 here tracks only the forge-side prerequisite: the base artifact must be layerable (a downstream image can `FROM` it and add a UI). The UI design itself is the product's concern.
+- PLAN: Forge side — ensure the base rootfs artifact is a clean layer (no baked-in UI assumptions, no serial-console-only assumptions in the base). Product side — out of scope for this roadmap.
+- STATUS: DEFERRED (forge-side prerequisite tracked here; full UI is a separate future project)
 <!-- END P15 -->
 
 <!-- BEGIN P16 -->
 P16 — Waydroid Android compatibility layer
 - REQ (verbatim): "prompte.md lines 671-788"
-- DECISION: Waydroid is a central architectural brick (Layer 3), not a Phase 2 bonus. Native Halium support confirmed (docs.waydro.id).
-- PLAN: Integrate Waydroid vendor images (HALIUM variant) into the bootc/OSTree rootfs. Kernel requirements already covered by config-fragment-standard (P04).
+- DECISION: Waydroid is a central architectural brick (Layer 3), not a Phase 2 bonus. Native Halium support confirmed (docs.waydro.id). Baked into the forge's base rootfs artifact.
+- PLAN: Integrate Waydroid vendor images (HALIUM variant) into the bootc/OSTree base rootfs artifact. Kernel requirements already covered by config-fragment-standard (P04).
 - STATUS: TODO
 <!-- END P16 -->
+
+Future Product
+-------------
+
+The following points track the **end-user product vision** — a separate future project built on
+top of this forge, with its own name, its own repo, and its own design pass. The forge (this
+repo) produces the base rootfs artifact; the future product adds the UI, the user-facing
+experience, the commercial model, and the identity. See docs/future-product.md for the full
+vision. These entries are recorded here so the forge does not lose sight of the downstream
+product it enables; they are NOT forge deliverables.
+
+<!-- BEGIN P15-PRODUCT -->
+P15-PRODUCT — Future product UI (mobile shell, onboarding, branding)
+- SCOPE: future product (NOT this forge). The "Android of Linux" mobile UI — touch shell,
+  onboarding flow, default app set, branding, identity. Built `FROM` the forge's base rootfs
+  artifact.
+- FORGE-SIDE PREREQUISITE: the base rootfs artifact must be layerable (no baked-in UI
+  assumptions, no serial-console-only constraints). Tracked as P15 above.
+- STATUS: FUTURE — separate project, not started
+<!-- END P15-PRODUCT -->
+
+<!-- BEGIN P16-PRODUCT -->
+P16-PRODUCT — Waydroid user-facing integration (product layer)
+- SCOPE: future product (NOT this forge). User-facing Waydroid integration — Android app
+  launcher, app store integration, permission UX, clipboard/notifications bridging. The forge
+  bakes Waydroid in as an architectural brick (P16); the product owns the user-facing layer.
+- STATUS: FUTURE — separate project, depends on P15-PRODUCT
+<!-- END P16-PRODUCT -->
+
+<!-- BEGIN P17-PRODUCT -->
+P17-PRODUCT — Commercial model (CHATONS-style hosting)
+- SCOPE: future product (NOT this forge). Commercial / community hosting model for the
+  end-user distro, inspired by the [CHATONS](https://chatons.org/) collective model
+  (federation of hosters offering decentralized, ethical services). Includes: hosted image
+  updates, app store hosting, device-adaptive image distribution, hosted sync/backup for the
+  "computer-in-pocket / phone-as-server / phone-as-PC" continuity use cases.
+- STATUS: FUTURE — separate project, depends on P15-PRODUCT and P16-PRODUCT
+<!-- END P17-PRODUCT -->
+
+<!-- BEGIN P18-PRODUCT -->
+P18-PRODUCT — Phone-server-PC continuity (computer-in-pocket)
+- SCOPE: future product (NOT this forge). The "computer in your pocket" angle: the same device
+  acts as phone, as a server (when docked / on the network), and as a desktop PC (when docked
+  to an external display). Continuity across the three roles — converged state, app
+  adaptation, docked/undocked UX. The forge provides the substrate (Halium + Debian + bootc +
+  Waydroid); the product owns the continuity UX.
+- STATUS: FUTURE — separate project, depends on P15-PRODUCT
+<!-- END P18-PRODUCT -->
 
 Meta
 ----

@@ -16,4 +16,4 @@ ff02::3 ip6-allhosts
 # (domain-set) and earlier than the first-boot wizard. domain-set rewrites this
 # line to the real global IPv4 once the WAN interface has a lease; the first-boot
 # wizard renames the host and the node is renamed on the next boot.
-127.0.1.1   daemoncores-ve.local daemoncores-ve
+127.0.1.1   daemoncores-phone.local daemoncores-phone

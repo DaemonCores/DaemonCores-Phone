@@ -1,8 +1,0 @@
-#!/bin/bash
-set -e
-
-case "$1" in
-  configure | triggered)
-    deb-systemd-helper enable ostree-remount.service
-    ;;
-esac

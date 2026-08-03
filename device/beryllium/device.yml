@@ -1,0 +1,87 @@
+# WIP — Work in progress. This device descriptor is part of the
+# DaemonCores-Phone standard Halium pipeline and is under active
+# development. Critical values are sourced but the descriptor and its
+# schema may change until the pipeline reaches a tagged milestone.
+# device.yml — Xiaomi POCO F1 (beryllium)
+# Reference device descriptor for the DaemonCores-Phone standard Halium pipeline.
+# Validated against device/_schema.yml (JSON Schema draft 2020-12).
+# Critical values are sourced; see the `sources` array below for provenance.
+
+codename: beryllium
+vendor: Xiaomi
+model: "POCO F1"
+
+# Android Vendor NDK version. Critical: determines the Halium version and the
+# hybris patch set. The POCO F1 shipped with Android 8.1 (VNDK 27) and was
+# updated by LineageOS to Android 9 (VNDK 28); Halium 9.0 targets VNDK 28.
+# Source: wiki.lineageos.org/devices/beryllium (LineageOS 16.0 = Android 9).
+vndk: "28"
+
+# Vendor kernel repository (LineageOS priority). The pipeline clones this repo
+# as-is, applies the Halium hybris patches, and cross-compiles for ARM64.
+# Source: github.com/LineageOS/android_kernel_xiaomi_sdm845
+kernel_repo: "https://github.com/LineageOS/android_kernel_xiaomi_sdm845"
+
+# Kernel defconfig, relative to arch/arm64/configs/ in the vendor kernel tree.
+# Source: github.com/LineageOS/android_kernel_xiaomi_sdm845 arch/arm64/configs/
+defconfig: "beryllium_defconfig"
+
+# Partition layout for boot image assembly. The by-name/ symlinks are the
+# standard Qualcomm SDM845 UFS layout exposed via /dev/block/bootdevice/.
+# Source: wiki.lineageos.org/devices/beryllium install instructions.
+partition_layout:
+  boot: "/dev/block/bootdevice/by-name/boot"
+  dtbo: "/dev/block/bootdevice/by-name/dtbo"
+  vendor_boot: "/dev/block/bootdevice/by-name/vendor_boot"
+  system: "/dev/block/bootdevice/by-name/system"
+  userdata: "/dev/block/bootdevice/by-name/userdata"
+
+# Halium version, derived from VNDK 28. Determines the hybris patch set applied
+# by the pipeline. Halium 9.0 is the release targeting Android 9 / VNDK 28.
+# Source: halium.org / github.com/Halium/projectmanagement
+halium_version: "9.0"
+
+# Transparent device support status. "functional" = usable daily.
+status: functional
+
+# Provenance of the values in this descriptor. Every critical field traces back
+# to a public source listed here.
+sources:
+  - name: lineageos_kernel
+    url: "https://github.com/LineageOS/android_kernel_xiaomi_sdm845"
+    branch: lineage-16.0
+  - name: adb_probe
+    url: "https://wiki.lineageos.org/devices/beryllium"
+
+# --- Optional fields ---
+
+# System-on-Chip identifier. The POCO F1 uses the Qualcomm SDM845 (Snapdragon 845).
+# Source: wiki.lineageos.org/devices/beryllium (SoC: Qualcomm SDM845).
+soc: "Qualcomm SDM845 (Snapdragon 845)"
+
+# SoC platform codename, matching arch/arm64/configs/sdm845_*.defconfig in the
+# vendor kernel tree. Used as the kernel build target.
+# Source: github.com/LineageOS/android_kernel_xiaomi_sdm845 (sdm845 family).
+platform: sdm845
+
+# Boot image assembly parameters consumed by mkbootimg. The POCO F1 uses Android
+# boot image header version 1 (introduced with Android 9 / Treble devices).
+# page_size 4096 and base 0x00000000 are the standard Qualcomm SDM845 values.
+# cmdline is the SDM845 serial-console boot line used by the LineageOS kernel.
+# partition_size 67108864 = 64 MiB boot partition cap.
+# Source: wiki.lineageos.org/devices/beryllium; LineageOS sdm845 common config.
+boot:
+  header_version: 1
+  base_address: "0x00000000"
+  page_size: 4096
+  cmdline: "console=ttyMSM0,115200n8 androidboot.hardware=qcom androidboot.console=ttyMSM0"
+  partition_size: 67108864
+
+# Free-form quirks documenting device-specific workarounds. SDM845 audio routing
+# on Halium typically requires tinymix adjustment; surfaced in CI logs.
+known_quirks:
+  - "Audio routing via tinymix (typical SDM845)"
+
+# Free-form notes. The POCO F1 is the reference device for the standard pipeline;
+# firmware blobs must match the MIUI build the vendor partition was extracted from.
+notes: "Reference device for the DaemonCores-Phone standard pipeline. Verify firmware blobs from matching MIUI build."
