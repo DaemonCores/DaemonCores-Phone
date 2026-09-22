@@ -1,43 +1,46 @@
-# Android Kernel Source Catalogue
+# Kernel-source acceptance policy
 
-Verified sources of Android vendor kernels usable by the DaemonCores-Phone pipeline.
-
-> **Warning:** several sources were initially suggested by ChatGPT. The user explicitly warned
-> that GPT hallucinates a lot about technical state. Everything must be verified. Each source
-> below has been independently verified via `webfetch`. Unverified sources are marked as such.
-
-## Verified
-
-- **AOSP ACK** — `android.googlesource.com/kernel/common/`
-- **LineageOS Poco F1 sdm845** — `github.com/LineageOS/android_kernel_xiaomi_sdm845`
-- **LineageOS Poco X3 surya** — `github.com/LineageOS/android_kernel_xiaomi_surya`
-- **Xiaomi Kernel OpenSource** — `github.com/MiCode/Xiaomi_Kernel_OpenSource`
-  (note: Poco F1 is under codename **dipper** NOT beryllium)
-- **OnePlus OSS** — `github.com/OnePlusOSS` (164 repos)
-- **Samsung Open Source** — `opensource.samsung.com` (web portal, not GitHub)
-- **GrapheneOS Kernel** — `github.com/GrapheneOS/kernel_common-6.12`
-- **crDroid Kernel** — `github.com/crdroidandroid` (1327 repos)
-- **Evolution X Kernel** — `github.com/Evolution-X` (113 repos)
-
-## Unverified
-
-- **Qualcomm CAF** — `source.codeaurora.org` inaccessible, possible migration to `quic.github.io`
-- **CalyxOS Kernel** — not found on GitHub, possible GitLab
-- **Google Pixel Kernel** — in AOSP, no standalone repo
+DaemonCores-Phone does not currently maintain a verified device-kernel catalogue. This document defines the evidence required before a kernel source is recorded as usable.
 
 ## Source priority
 
-1. LineageOS (monthly ASB backports)
-2. OEM official
-3. Other ROM projects
-4. AOSP ACK (reference, may lack device-specific drivers)
+Prefer sources in this order when they are available and buildable for the exact target:
 
-## Sources
+1. vendor-published source corresponding to the installed firmware release;
+2. an actively maintained device kernel used by a reproducible Android distribution build;
+3. a community kernel with documented device and firmware compatibility;
+4. an archived source used only for historical investigation.
 
-- AOSP manifest fetched 2026-08-02
-- Xiaomi README grep: `beryllium=0 dipper=3`
-- OnePlusOSS fetched 2026-08-02
-- Samsung fetched 2026-08-02
-- GrapheneOS fetched 2026-08-02
-- crDroid fetched 2026-08-02
-- Evolution X fetched 2026-08-02
+Repository popularity or name similarity is not verification.
+
+## Required record
+
+A device descriptor should record or link to:
+
+- exact repository URL;
+- immutable commit ID;
+- expected toolchain and build environment;
+- defconfig path;
+- Android and firmware release compatibility;
+- kernel version;
+- required patch series;
+- license information and source-compliance notes;
+- successful build log and artifact digest;
+- boot evidence for the target device.
+
+## Verification procedure
+
+1. confirm the repository actually contains the target defconfig and device code;
+2. check that the source revision matches the target's firmware generation;
+3. reproduce the upstream or distribution build before applying project patches;
+4. preserve the unmodified build result for comparison;
+5. apply patches as a reviewable series;
+6. rebuild from a clean environment;
+7. compare image format and size with the known-good boot image;
+8. test only after recovery and backup procedures are verified.
+
+## Catalogue status
+
+No kernel source is currently marked as verified by this repository because there is no committed device descriptor with corresponding build and boot evidence.
+
+Candidates belong in an issue or pull request until the verification procedure is complete. Once accepted, the canonical record should live in `device/<codename>/device.yml`, not in a free-form list here.

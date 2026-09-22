@@ -1,61 +1,53 @@
-# Base Rootfs Artifact (Minimal)
+# Current image experiments
 
-> DaemonCores-Phone smartphone forge — minimal base rootfs layer.
+The three root Containerfiles are bootc image experiments. They are not yet a mobile operating-system image.
 
-## What it is
+## Image definitions
 
-The minimal base rootfs is a **Debian Trixie ARM64** bootc/OSTree image that
-boots to a fully supported **CLI** on Android smartphones via the
-[Halium](https://halium.org/) standard initramfs bridge. The kernel and
-initramfs live in the Android `boot.img` (see
-[`architecture.md`](architecture.md)); the rootfs documented here is the
-bootc/OSTree userspace that the Halium initramfs mounts as the live root
-filesystem.
+| File | Current scope |
+| --- | --- |
+| `Containerfile` | General Debian bootc image using amd64 kernel packages, SSH, Podman, ifupdown2, firmware, and first-boot tooling. |
+| `Containerfile.minimal.x86_64` | Reduced x86_64 image using systemd-networkd and a small runtime package set. |
+| `Containerfile.minimal.arm64` | Reduced ARM64/SBC image using Debian's generic ARM64 kernel, U-Boot tools, and serial-console defaults. |
 
-## Role in the forge
+The image labels still contain references inherited from `debian-bootc`. They should be corrected before these artifacts are published as DaemonCores-Phone products.
 
-This image is a **build artifact** — one layer in the DaemonCores-Phone
-pipeline — **not the end-user product**. It is the shared atomic base that
-downstream forge stages (Halium integration, device adaptation, UI shells,
-end-user images) layer on top of. The end-user vision is described in
-[`future-product.md`](future-product.md); the full pipeline in
-[`architecture.md`](architecture.md).
+## What the minimal images implement
 
-## Key characteristics
+Both minimal files:
 
-- **Atomic updates & rollback** — bootc/OSTree transactional upgrades with
-  automatic rollback on failed boot; the previous deployment is always
-  retained and selectable from the boot menu.
-- **Debian ecosystem** — apt packages, Debian Trixie security updates, and
-  the full Debian userspace stack flow through the bootc layer unchanged.
-- **Halium initramfs bridge** — the Android `boot.img` kernel + Halium
-  initramfs perform early device bring-up (display, touch, modem, sensors)
-  and hand control to this rootfs as the standard Linux userspace.
-- **Composefs integrity** — the rootfs is mounted via composefs so the
-  OSTree deployment is cryptographically verified at boot.
+- derive from Debian Trixie;
+- install bootc, dracut, a kernel, network tooling, time synchronization, and CA certificates;
+- move mutable directories into the OSTree-compatible `/var` layout;
+- enable systemd-networkd with a wired DHCP rule;
+- set journald `Storage=none`;
+- mask non-essential periodic and console services;
+- declare no container healthcheck.
 
-## What it does NOT include
+The ARM64 file uses `u-boot-tools` and generic SBC-oriented serial consoles. The x86_64 file uses the amd64 EFI/GRUB path.
 
-This is a deliberate minimal base. It intentionally omits:
+## What they do not implement
 
-- **No UI** — no display server, no Wayland compositor, no graphical shell,
-  no launcher. The image boots to a text console.
-- **No SSH by default** — no `openssh-server`; access is via the serial
-  console (or a downstream layer that adds SSH).
-- **No man pages** — `man-db`, `manpages`, and `groff-base` are not
-  installed to keep the image small.
-- **No desktop packages** — no `bash-completion`, `nano`, `less`,
-  `locales`, `console-setup`, `podman`, or interactive niceties.
-- **No first-boot user setup** — no `firstboot-user-setup` wizard; the
-  image is headless and configured by downstream layers.
+- Android boot or vendor-boot images;
+- device-specific DTB/DTBO selection;
+- an Android vendor kernel or Halium patches;
+- a Halium initramfs;
+- firmware extraction from a device image;
+- modem, audio, camera, sensors, GPU, suspend, charging, or touch integration;
+- libhybris, Waydroid, or a mobile UI;
+- a phone-specific installer or recovery process.
 
-Downstream forge stages add the UI, networking, user management, and
-device-specific packages on top of this base.
+## CI mismatch to resolve
 
-## Cross-links
+The shared image workflow derives variants from all `Containerfile*` files and schedules amd64 and arm64 for each variant. Architecture-specific filenames alone do not constrain that matrix.
 
-- [`architecture.md`](architecture.md) — full pipeline description, boot
-  chain, and the role of each forge stage.
-- [`future-product.md`](future-product.md) — end-user product vision and
-  the layers that turn this base rootfs into a usable smartphone
-  experience.
+Before enabling publication, the repository should either:
+
+- replace the two minimal files with one architecture-parameterized Containerfile; or
+- extend the workflow contract so each file declares its supported architectures.
+
+Until then, tag discovery is an implementation detail, not an artifact-support statement.
+
+## Appropriate use today
+
+The image files are useful for testing reduced Debian/bootc composition and identifying the boundary between the root filesystem and future device boot work. They should not be flashed to a phone.
