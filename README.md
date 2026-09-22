@@ -1,72 +1,108 @@
-> ⚠️ **DEVELOPMENT IN PROGRESS — WORK IN PROGRESS** ⚠️
-> This project is in active development. Nothing is stable, nothing is production-ready.
-> Contributions and feedback are welcome, but expect major changes.
+# DaemonCores-Phone
 
-DaemonCores-Phone
-=================
+<p align="center">
+  <img src="https://raw.githubusercontent.com/DaemonCores/.github/refs/heads/main/assets/banner.svg" alt="AstralEmu Banner" width="100%"/>
+</p>
 
-**A Linux distribution for smartphones. Standard, autonomous, for all devices.**
+<p>
+  <strong align="left">Simplify and Innovate for Everyone.</strong>
+  <a href="https://github.com/DaemonCores/debian-bootc/wiki"><img align="right" src="https://img.shields.io/badge/Wiki-FFFFFF?style=for-the-badge&logoColor=white" alt="Documentation"/></a>
+  <a href="https://github.com/orgs/DaemonCores/discussions"><img align="right" src="https://img.shields.io/badge/Community-000000?style=for-the-badge&logoColor=white" alt="Community"/></a>
+  <a href="https://github.com/DaemonCores/debian-bootc"><img align="right" src="https://img.shields.io/badge/Base_debian_for_all_project-A81D33?style=for-the-badge&logo=debian&logoColor=white" alt="Debian Bootc"/></a>
+  
+  <em>Identify gaps and fill them, make improvements where possible, but above all, empower developers to offer more to users.</em>
+</p>
 
-DaemonCores-Phone is a Linux distribution based on Debian Trixie and bootc/OSTree,
-designed to run on the widest possible range of Android smartphones.
-It uses [Halium](https://halium.org/) and libhybris to run proprietary Android
-drivers without reverse engineering — the same standard that powers UBports and Droidian.
+---
 
-Why DaemonCores-Phone?
-----------------------
+DaemonCores-Phone is an early-stage research project exploring a schema-driven path from Android device metadata to a Debian/bootc smartphone system.
 
-| Project | Approach | Number of devices |
-|---|---|---|
-| postmarketOS | Manual mainline port per device | ~200-300 |
-| UBports | Manual Halium port per device | 111 |
-| **DaemonCores-Phone** | **Automated standard Halium pipeline** | **Potentially 600+** |
+The repository currently contains the device descriptor contract, a JSON-to-YAML probe converter, Debian bootc image experiments, package recipes, and shared CI integration. It does **not** yet contain a complete Halium device build pipeline or a bootable phone release.
 
-- **Standard CI pipeline**: a single workflow for all devices. No manual port.
-- **Zero kernel maintenance**: we use existing vendor kernels (LineageOS, stock) automatically patched with Halium.
-- **ADB probe in 30 seconds**: your device is not in the database? Run one command, open a PR, and it is supported.
-- **Debian base + bootc/OSTree**: atomic updates, rollback, the entire Debian ecosystem.
-- **Native proprietary Android drivers**: no reverse engineering. The drivers that work on Android work on DaemonCores-Phone.
+## Current implementation
 
-Architecture
-------------
+| Component | State |
+| --- | --- |
+| `device/_schema.yml` | Implemented JSON Schema for canonical device descriptors. |
+| `scripts/probe-to-yaml.py` | Implemented converter and schema validation for an existing probe JSON document. |
+| `Containerfile` | Debian bootc image scaffold inherited from the server-oriented base work. |
+| `Containerfile.minimal.x86_64` | Reduced x86_64 bootc image experiment. |
+| `Containerfile.minimal.arm64` | Reduced generic ARM64/SBC bootc image experiment. |
+| Debian package manifest | Builds the inherited bootc, OSTree, composefs, bootupd, first-boot, network, and amd64 GRUB packages. |
+| Shared CI caller | Present, but the phone-specific architecture and artifact matrix is not yet finalized. |
 
-Sources (LineageOS, UBports, Halium, pmOS, dumpyara/aospdtgen) -> device.yml -> standard Halium pipeline (hybris patch, kernel compile, initramfs, boot.img) -> GitHub Releases (boot.img + Debian bootc/OSTree rootfs)
+## Not implemented yet
 
-Device status
---------------
+The following items appeared as completed features in older documentation but are not present in the current tree:
 
-Each device has a transparent status in its device.yml:
+- an ADB collection script (`scripts/probe.sh`);
+- automated device ingestion from LineageOS, UBports, Halium, or firmware dumps;
+- committed device descriptors under `device/<codename>/device.yml`;
+- vendor-kernel checkout, patching, and compilation;
+- a standard Halium initramfs;
+- Android `boot.img`, `vendor_boot`, or DTBO assembly;
+- libhybris or Android HAL integration;
+- Waydroid integration;
+- a validated phone installation, update, or recovery procedure.
 
-| Status | Meaning |
-|---|---|
-| booted | The kernel boots, that's it |
-| partial | Network or audio works |
-| functional | Usable daily |
-| full | Everything works |
+These are roadmap items, not current capabilities. See [`todo/ROADMAP.md`](todo/ROADMAP.md).
 
-Add your device
---------------
+## Device descriptor
 
-Your device is not yet supported?
+A descriptor records the minimum information needed to reproduce and review a device port:
 
-1. Connect your Android phone via USB (debugging enabled)
-2. Run ./scripts/probe.sh
-3. Open a PR with the generated device.yml
-4. The CI automatically builds the boot.img
+- codename, vendor, and model;
+- VNDK and intended Halium version;
+- kernel repository and defconfig;
+- Android partition layout;
+- support status;
+- provenance for the collected information.
 
-30 seconds. That's it.
+The schema is the current contract. No device should be presented as supported until its descriptor is committed, validated, built by CI, and linked to reproducible boot evidence.
 
-Quick start (developers)
---------------------------
+## Convert an existing probe document
 
+Install the converter dependencies:
+
+```bash
+python3 -m pip install jsonschema PyYAML
 ```
-git clone https://github.com/DaemonCores/DaemonCores-Phone.git
-cd DaemonCores-Phone
+
+Convert and validate a JSON document that already contains every required field:
+
+```bash
+python3 scripts/probe-to-yaml.py \
+  --input probe.json \
+  --codename example \
+  --output device/example/device.yml
 ```
 
-See todo/ROADMAP.md for the development plan.
+The converter does not connect to a phone. Collection of the input JSON remains to be implemented.
 
-License
--------
+## Development priorities
 
-[LGPL-2.1](LICENSE)
+1. remove server-only assumptions from the image and package set;
+2. make the CI matrix explicit instead of applying every Containerfile to every architecture;
+3. add schema tests and converter tests;
+4. implement and review the probe collection format;
+5. add one device as a narrow vertical slice;
+6. build and validate the kernel, initramfs, boot image, rootfs hand-off, and recovery path for that device;
+7. generalize only after the first reproducible port works.
+
+## Documentation
+
+- [Current architecture](docs/architecture.md)
+- [Halium integration boundary](docs/halium-delta.md)
+- [Design decisions](docs/justifications.md)
+- [Current image experiments](docs/minimal.md)
+- [Kernel-source policy](docs/sources-kernel.md)
+- [Roadmap](todo/ROADMAP.md)
+
+---
+
+<p>
+  <strong align="left">Made with ⭐ by the DaemonCores community</strong>
+  <a href="https://github.com/DaemonCores/debian-bootc/wiki"><img align="right" src="https://img.shields.io/badge/Wiki-FFFFFF?style=for-the-badge&logoColor=white" alt="Documentation"/></a>
+  <a href="https://github.com/orgs/DaemonCores/discussions"><img align="right" src="https://img.shields.io/badge/Community-000000?style=for-the-badge&logoColor=white" alt="Community"/></a>
+  <a href="https://github.com/DaemonCores/debian-bootc"><img align="right" src="https://img.shields.io/badge/Base_debian_for_all_project-A81D33?style=for-the-badge&logo=debian&logoColor=white" alt="Debian Bootc"/></a>
+</p>
