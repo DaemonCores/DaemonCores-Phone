@@ -1,43 +1,41 @@
 # Support
 
-## Where to Get Help
+<p align="center">
+  <img src="https://raw.githubusercontent.com/DaemonCores/.github/refs/heads/main/assets/banner.svg" alt="AstralEmu Banner" width="100%"/>
+</p>
 
-### Documentation
+<p>
+  <strong align="left">Simplify and Innovate for Everyone.</strong>
+  <a href="https://github.com/DaemonCores/debian-bootc/wiki"><img align="right" src="https://img.shields.io/badge/Wiki-FFFFFF?style=for-the-badge&logoColor=white" alt="Documentation"/></a>
+  <a href="https://github.com/orgs/DaemonCores/discussions"><img align="right" src="https://img.shields.io/badge/Community-000000?style=for-the-badge&logoColor=white" alt="Community"/></a>
+  <a href="https://github.com/DaemonCores/debian-bootc"><img align="right" src="https://img.shields.io/badge/Base_debian_for_all_project-A81D33?style=for-the-badge&logo=debian&logoColor=white" alt="Debian Bootc"/></a>
+  
+  <em>Identify gaps and fill them, make improvements where possible, but above all, empower developers to offer more to users.</em>
+</p>
 
-The [debian-bootc Wiki](https://github.com/DaemonCores/debian-bootc/wiki) contains the latest documentation, build instructions, and troubleshooting guides.
+---
 
-### GitHub Issues
+DaemonCores-Phone does not currently publish a supported phone image or claim support for any device.
 
-If you encounter a bug or want to request a feature, please use the GitHub issue forms:
+GitHub issues may be used for:
 
-- [Bug Report](https://github.com/DaemonCores/debian-bootc/issues/new?template=bug_report.yml)
-- [Feature Request](https://github.com/DaemonCores/debian-bootc/issues/new?template=feature_request.yml)
+- device-schema problems;
+- `probe-to-yaml.py` bugs;
+- documentation corrections;
+- design discussion for the first validated device path;
+- reproducible problems in the existing bootc image experiments.
 
-Before opening an issue, please search existing issues to avoid duplicates.
+When reporting a converter problem, include a minimal sanitized JSON input, the command used, complete error output, Python version, and dependency versions.
 
-## What Is Supported
+Do not flash repository artifacts to a phone based on the current documentation. There is no validated install, update, rollback, or recovery procedure yet.
 
-We provide community support for:
+Security issues should be reported privately according to [SECURITY.md](SECURITY.md).
 
-- Building and deploying the debian-bootc image.
-- ISO installer generation (online and offline).
-- First-boot configuration and the `firstboot-user-setup` wizard.
-- General bootc/ostree lifecycle operations (`bootc update`, `bootc rollback`, etc.).
-- The APT repository and package updates.
-- Networking configuration with `ifupdown2`.
-- Secure Boot MOK enrollment and troubleshooting.
+---
 
-## What Is NOT Supported
-
-The following are explicitly out of scope for community support:
-
-- **Upstream Debian bugs**: Issues that are reproducible on a standard Debian Trixie installation (without bootc/ostree) should be reported to the [Debian Bug Tracking System](https://bugs.debian.org/) directly.
-- **Hardware-specific issues unrelated to the image**: Driver or firmware problems that are not specific to the atomic deployment model.
-- **Downstream project issues**: Bugs specific to layers built on top of debian-bootc (e.g., DaemonCores-VE) should be reported to their respective repositories.
-- **Paid enterprise support**: This is a community-maintained project. For professional support, consider commercial vendors offering Debian or bootc consulting.
-
-## Response Expectations
-
-This is a community-maintained project. Responses to issues and discussions are best-effort and may take several days depending on maintainer availability.
-
-For urgent or security-sensitive matters, please refer to [SECURITY.md](SECURITY.md).
+<p>
+  <strong align="left">Made with ⭐ by the DaemonCores community</strong>
+  <a href="https://github.com/DaemonCores/debian-bootc/wiki"><img align="right" src="https://img.shields.io/badge/Wiki-FFFFFF?style=for-the-badge&logoColor=white" alt="Documentation"/></a>
+  <a href="https://github.com/orgs/DaemonCores/discussions"><img align="right" src="https://img.shields.io/badge/Community-000000?style=for-the-badge&logoColor=white" alt="Community"/></a>
+  <a href="https://github.com/DaemonCores/debian-bootc"><img align="right" src="https://img.shields.io/badge/Base_debian_for_all_project-A81D33?style=for-the-badge&logo=debian&logoColor=white" alt="Debian Bootc"/></a>
+</p>
