@@ -1,92 +1,58 @@
-# Contributing to debian-bootc
+# Contributing to DaemonCores-Phone
 
-Thank you for your interest in contributing! This document outlines the process for reporting bugs, proposing features, and submitting changes.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/DaemonCores/.github/refs/heads/main/assets/banner.svg" alt="AstralEmu Banner" width="100%"/>
+</p>
 
-## Reporting Bugs
+<p>
+  <strong align="left">Simplify and Innovate for Everyone.</strong>
+  <a href="https://github.com/DaemonCores/debian-bootc/wiki"><img align="right" src="https://img.shields.io/badge/Wiki-FFFFFF?style=for-the-badge&logoColor=white" alt="Documentation"/></a>
+  <a href="https://github.com/orgs/DaemonCores/discussions"><img align="right" src="https://img.shields.io/badge/Community-000000?style=for-the-badge&logoColor=white" alt="Community"/></a>
+  <a href="https://github.com/DaemonCores/debian-bootc"><img align="right" src="https://img.shields.io/badge/Base_debian_for_all_project-A81D33?style=for-the-badge&logo=debian&logoColor=white" alt="Debian Bootc"/></a>
+  
+  <em>Identify gaps and fill them, make improvements where possible, but above all, empower developers to offer more to users.</em>
+</p>
 
-If you encounter a bug, please open a [Bug Report](https://github.com/DaemonCores/debian-bootc/issues/new?template=bug_report.yml) and fill out the form completely. Include:
+---
 
-- The exact version of the image you are running.
-- The deployment type (online ISO, offline ISO, or direct container).
-- Clear steps to reproduce the issue.
-- Relevant logs or command output.
+DaemonCores-Phone is an early implementation. Contributions should improve the verified path from device data to a reproducible boot rather than expand unsupported compatibility claims.
 
-## Proposing Features
+## Useful contributions now
 
-Feature requests are tracked as GitHub issues. To propose a new feature or enhancement, open a [Feature Request](https://github.com/DaemonCores/debian-bootc/issues/new?template=feature_request.yml) and describe:
+- tests and fixtures for `scripts/probe-to-yaml.py`;
+- schema corrections backed by real device data;
+- privacy review for the future probe format;
+- cleanup of inherited image and package assumptions;
+- an explicit architecture matrix for the CI;
+- recovery, build, and boot evidence for one owned test device;
+- documentation corrections that distinguish implemented and planned work.
 
-- The problem you are trying to solve.
-- The solution you would like to see.
-- Any alternatives you have considered.
+## Device submissions
 
-## Development Environment
+Do not submit a generated descriptor without reviewing every field. A device pull request should include source provenance, pinned revisions, recovery information, and the evidence available for its status.
 
-debian-bootc is built as a `bootc`/`ostree` image. The main artifact is the `Containerfile`.
+Never include serial numbers, account identifiers, tokens, private keys, full user partitions, or proprietary files that cannot be redistributed.
 
-### Prerequisites
+## Status claims
 
-- [Podman](https://podman.io/) or Docker
-- [bootc](https://github.com/bootc-dev/bootc) (for local testing)
-- A Debian Trixie system or container for package build testing
+The labels `booted`, `partial`, `functional`, and `full` require the evidence defined in [docs/architecture.md](docs/architecture.md). A schema-valid descriptor or successful kernel compilation is not proof that a phone boots.
 
-### Local Build
+## Code changes
 
-```bash
-podman build -t debian-bootc:latest -f Containerfile .
-```
+- Add tests for converter and schema behaviour.
+- Make build inputs reproducible and pinned.
+- Keep destructive flash operations out of automated defaults.
+- Provide a recovery path before asking others to test an image.
+- Document tested and untested hardware paths explicitly.
+- Update the roadmap and documentation in the same pull request.
 
-### Lint
+Use [SECURITY.md](SECURITY.md) for private vulnerability reports.
 
-```bash
-bootc container lint
-```
+---
 
-### Testing the APT repository locally
-
-```bash
-# After running bootc-debs-builder, the APT repo is published to GitHub Pages
-# You can also test locally by pointing apt at a local file server
-```
-
-## Commit Conventions
-
-We follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
-
-Format:
-
-```
-<type>(<scope>): <subject>
-```
-
-Common types:
-
-- `feat`: new feature or enhancement
-- `fix`: bug fix
-- `docs`: documentation only changes
-- `style`: formatting, missing semicolons, etc.
-- `refactor`: code change that neither fixes a bug nor adds a feature
-- `chore`: build process or auxiliary tool changes
-
-Example:
-
-```
-feat(iso): add offline installer kickstart template
-```
-
-## Review Process
-
-All contributions are reviewed via GitHub Pull Requests. Before submitting:
-
-1. Ensure your branch is up to date with `main`.
-2. Describe the motivation and scope of the change in the PR description.
-3. Reference any related issues using `Fixes #<issue_number>` or `Relates to #<issue_number>`.
-
-A maintainer will review the PR, request changes if needed, and merge once approved.
-
-## Security
-
-If you discover a security vulnerability, please see [SECURITY.md](SECURITY.md) for the responsible disclosure process.
-
-## Questions?
-
-For general support questions, please check [SUPPORT.md](SUPPORT.md) first.
+<p>
+  <strong align="left">Made with ⭐ by the DaemonCores community</strong>
+  <a href="https://github.com/DaemonCores/debian-bootc/wiki"><img align="right" src="https://img.shields.io/badge/Wiki-FFFFFF?style=for-the-badge&logoColor=white" alt="Documentation"/></a>
+  <a href="https://github.com/orgs/DaemonCores/discussions"><img align="right" src="https://img.shields.io/badge/Community-000000?style=for-the-badge&logoColor=white" alt="Community"/></a>
+  <a href="https://github.com/DaemonCores/debian-bootc"><img align="right" src="https://img.shields.io/badge/Base_debian_for_all_project-A81D33?style=for-the-badge&logo=debian&logoColor=white" alt="Debian Bootc"/></a>
+</p>
