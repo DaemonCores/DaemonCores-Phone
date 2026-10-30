@@ -43,6 +43,7 @@ on:
         default: true
 
 permissions:
+  actions: write
   contents: write
   packages: write
   pages: write
